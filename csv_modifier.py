@@ -4,9 +4,21 @@ import csv
 import pandas as pd
 import os
 import re
+import sys
 from datetime import datetime
+import decimal
+from collections import Counter
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
+
+class ParsedNumber:
+    __slots__ = ['value', 'orig_decimals', 'orig_text']
+
+    def __init__(self, value: decimal.Decimal, orig_decimals: int, orig_text: str):
+        self.value = value
+        self.orig_decimals = orig_decimals
+        self.orig_text = orig_text
+
 
 # Pre-compiled patterns (compiling once matters a lot on large files).
 # _DATE_HINT_RE cheaply rejects non-date cells so we skip the expensive
@@ -19,16 +31,40 @@ _LINEBREAK_RE = re.compile('[\r\n\x0b\x0c\x85\u2028\u2029]+')
 _EN_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?')
 _PL_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?')
 
+_NUMBER_FORMAT_OPTIONS = (
+    "English · 1,234.56",
+    "Polish · 1 234,56",
+)
+_OUTPUT_FORMAT_OPTIONS = (
+    "CSV 텍스트 파일 (.csv)",
+    "Excel 통합 문서 (.xlsx)",
+)
+
 class CSVModifierApp:
+    @staticmethod
+    def _resource_path(filename):
+        """Find bundled assets both during development and in PyInstaller builds."""
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, filename)
+
     def __init__(self, root):
         self.root = root
         self.root.title(f"CSV Modifier v{__version__}")
-        self.root.geometry("720x560")
-        self.root.minsize(600, 500)
+        self.root.geometry("820x760")
+        self.root.minsize(700, 650)
 
         try:
-            self.root.iconbitmap(os.path.join(os.path.dirname(__file__), "icon.ico"))
+            self.root.iconbitmap(self._resource_path("icon.ico"))
         except Exception:
+            pass
+
+        self._app_icon_image = None
+        self._header_icon_image = None
+        try:
+            self._app_icon_image = tk.PhotoImage(file=self._resource_path("icon.png"))
+            self._header_icon_image = self._app_icon_image.subsample(20, 20)
+            self.root.iconphoto(True, self._app_icon_image)
+        except tk.TclError:
             pass
 
         # A calm, high-contrast palette that remains readable with the clam theme.
@@ -54,12 +90,14 @@ class CSVModifierApp:
         style.configure(".", font=("Segoe UI", 10), background=page_bg, foreground=text)
         style.configure("App.TFrame", background=page_bg)
         style.configure("Header.TFrame", background=navy)
+        style.configure("Header.Icon.TLabel", background=navy)
         style.configure("Header.Title.TLabel", background=navy, foreground="#FFFFFF", font=("Segoe UI Semibold", 20))
         style.configure("Header.Subtitle.TLabel", background=navy, foreground="#C9D6E2", font=("Segoe UI", 10))
         style.configure("Card.TLabelframe", background=surface, bordercolor=border, relief="solid", borderwidth=1)
         style.configure("Card.TLabelframe.Label", background=surface, foreground=navy, font=("Segoe UI Semibold", 10))
         style.configure("TLabel", background=surface, foreground=text)
         style.configure("Muted.TLabel", background=surface, foreground=muted, font=("Segoe UI", 9))
+        style.configure("Help.TLabel", background=surface, foreground=muted, font=("Segoe UI", 8))
         style.configure("Footer.TLabel", background=page_bg, foreground=muted, font=("Segoe UI", 9))
         style.configure("Field.TLabel", background=surface, foreground=text, font=("Segoe UI Semibold", 9))
         style.configure("TEntry", fieldbackground="#FFFFFF", foreground=text, padding=(8, 6), bordercolor=border)
@@ -77,19 +115,25 @@ class CSVModifierApp:
         main = ttk.Frame(root, style="App.TFrame", padding=(24, 20, 24, 18))
         main.grid(row=0, column=0, sticky="nsew")
         main.columnconfigure(0, weight=1)
-        main.rowconfigure(2, weight=1)
+        main.rowconfigure(5, weight=1)
 
         header = ttk.Frame(main, style="Header.TFrame", padding=(22, 18))
         header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="CSV Modifier", style="Header.Title.TLabel").grid(row=0, column=0, sticky="w")
+        header.columnconfigure(1, weight=1)
+        title_column = 0
+        if self._header_icon_image is not None:
+            ttk.Label(header, image=self._header_icon_image, style="Header.Icon.TLabel").grid(
+                row=0, column=0, rowspan=2, sticky="w", padx=(0, 14)
+            )
+            title_column = 1
+        ttk.Label(header, text="CSV Modifier", style="Header.Title.TLabel").grid(row=0, column=title_column, sticky="w")
         ttk.Label(
             header,
-            text="Clean, normalize, and export tabular data with confidence.",
+            text="파일을 정리하고 숫자 표기를 맞춘 새 파일을 만듭니다.",
             style="Header.Subtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        ).grid(row=1, column=title_column, sticky="w", pady=(3, 0))
 
-        file_section = ttk.LabelFrame(main, text="1. Choose a source file", style="Card.TLabelframe", padding=(18, 14))
+        file_section = ttk.LabelFrame(main, text="1. 원본 파일 선택", style="Card.TLabelframe", padding=(18, 14))
         file_section.grid(row=1, column=0, sticky="ew", pady=(16, 12))
         file_section.columnconfigure(0, weight=1)
 
@@ -97,69 +141,136 @@ class CSVModifierApp:
         self.filepath = tk.StringVar()
         self.lbl_file = ttk.Entry(file_section, textvariable=self.filepath, state="readonly")
         self.lbl_file.grid(row=0, column=0, sticky="ew")
-        ttk.Button(file_section, text="Browse...", command=self.browse_file, style="Secondary.TButton").grid(row=0, column=1, padx=(10, 0))
-        ttk.Label(file_section, text="CSV, TXT, and Excel (.xlsx) files are supported.", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(file_section, text="파일 찾기...", command=self.browse_file, style="Secondary.TButton").grid(row=0, column=1, padx=(10, 0))
+        ttk.Label(
+            file_section,
+            text="CSV, TXT, Excel(.xlsx/.xlsm)을 고르세요. 원본 파일은 바꾸지 않습니다.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         settings = ttk.Frame(main, style="App.TFrame")
         settings.grid(row=2, column=0, sticky="nsew")
         settings.columnconfigure(0, weight=1)
         settings.columnconfigure(1, weight=1)
 
-        import_section = ttk.LabelFrame(settings, text="2. Configure import", style="Card.TLabelframe", padding=(18, 14))
+        import_section = ttk.LabelFrame(settings, text="2. 파일 읽는 방법", style="Card.TLabelframe", padding=(18, 14))
         import_section.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         import_section.columnconfigure(1, weight=1)
 
-        output_section = ttk.LabelFrame(settings, text="3. Choose output", style="Card.TLabelframe", padding=(18, 14))
+        output_section = ttk.LabelFrame(settings, text="3. 저장 방법", style="Card.TLabelframe", padding=(18, 14))
         output_section.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         output_section.columnconfigure(1, weight=1)
 
         # Delimiter
         self.delimiter = tk.StringVar(value=",")
-        ttk.Label(import_section, text="Delimiter", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(import_section, text="파일 구분 기호", style="Field.TLabel").grid(row=0, column=0, sticky="w")
         self.ent_delimiter = ttk.Entry(import_section, textvariable=self.delimiter, width=8)
-        self.ent_delimiter.grid(row=0, column=1, sticky="ew", pady=(0, 12))
-        self.ent_delimiter.bind("<KeyRelease>", self.update_max_columns)
+        self.ent_delimiter.grid(row=0, column=1, sticky="ew")
+        self._delimiter_user_set = False
+        self.ent_delimiter.bind("<KeyRelease>", self._on_delimiter_user_change)
+        ttk.Label(
+            import_section,
+            text="쉼표(,), 세미콜론(;), 탭(\\t) 중 파일 안의 표를 나누는 기호입니다.",
+            style="Help.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
 
         # Number Format
-        self.num_format = tk.StringVar(value="English")
-        ttk.Label(import_section, text="Number format", style="Field.TLabel").grid(row=1, column=0, sticky="w")
-        self.combo_format = ttk.Combobox(import_section, textvariable=self.num_format, values=["English", "Polish"], state="readonly", width=15)
-        self.combo_format.grid(row=1, column=1, sticky="ew")
+        self.num_format = tk.StringVar(value=_NUMBER_FORMAT_OPTIONS[0])
+        ttk.Label(import_section, text="숫자 표기 방식", style="Field.TLabel").grid(row=2, column=0, sticky="w")
+        self.combo_format = ttk.Combobox(
+            import_section,
+            textvariable=self.num_format,
+            values=_NUMBER_FORMAT_OPTIONS,
+            state="readonly",
+            width=22,
+        )
+        self.combo_format.grid(row=2, column=1, sticky="ew")
+        self.number_format_help = tk.StringVar()
+        ttk.Label(import_section, textvariable=self.number_format_help, style="Help.TLabel", wraplength=310).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+        self.combo_format.bind("<<ComboboxSelected>>", self._update_number_format_help)
 
         # Max Columns
         self.max_cols = tk.StringVar(value="0")
-        ttk.Label(output_section, text="Max columns", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(output_section, text="표의 열 개수", style="Field.TLabel").grid(row=0, column=0, sticky="w")
         self.ent_max_cols = ttk.Entry(output_section, textvariable=self.max_cols, width=8)
-        self.ent_max_cols.grid(row=0, column=1, sticky="ew", pady=(0, 12))
+        self.ent_max_cols.grid(row=0, column=1, sticky="ew")
+        ttk.Label(
+            output_section,
+            text="파일을 고르면 자동으로 채워집니다. 표의 실제 열 수와 다를 때만 바꾸세요.",
+            style="Help.TLabel",
+            wraplength=310,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
 
         # Output Format
-        self.out_format = tk.StringVar(value="CSV")
-        ttk.Label(output_section, text="Output format", style="Field.TLabel").grid(row=1, column=0, sticky="w")
-        self.combo_out_format = ttk.Combobox(output_section, textvariable=self.out_format, values=["CSV", "Excel (.xlsx)"], state="readonly", width=15)
-        self.combo_out_format.grid(row=1, column=1, sticky="ew")
+        self.out_format = tk.StringVar(value=_OUTPUT_FORMAT_OPTIONS[0])
+        ttk.Label(output_section, text="저장 파일 형식", style="Field.TLabel").grid(row=2, column=0, sticky="w")
+        self.combo_out_format = ttk.Combobox(
+            output_section,
+            textvariable=self.out_format,
+            values=_OUTPUT_FORMAT_OPTIONS,
+            state="readonly",
+            width=22,
+        )
+        self.combo_out_format.grid(row=2, column=1, sticky="ew")
+        self.output_format_help = tk.StringVar()
+        ttk.Label(output_section, textvariable=self.output_format_help, style="Help.TLabel", wraplength=310).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+        self.combo_out_format.bind("<<ComboboxSelected>>", self._update_output_hint)
 
         action_area = ttk.Frame(main, style="App.TFrame")
         action_area.grid(row=3, column=0, sticky="ew", pady=(16, 0))
         action_area.columnconfigure(0, weight=1)
-        ttk.Label(action_area, text="Your original file is never changed.", style="Footer.TLabel").grid(row=0, column=0, sticky="w")
+        self.output_hint = tk.StringVar(value="저장 파일: 파일을 고르면 예상 이름을 보여 드립니다.")
+        ttk.Label(action_area, textvariable=self.output_hint, style="Footer.TLabel").grid(row=0, column=0, sticky="w")
 
         # Process Button
-        self.btn_process = ttk.Button(action_area, text="Process & Save", command=self.process_csv, style="Primary.TButton")
+        self.btn_process = ttk.Button(action_area, text="정리하고 저장하기", command=self.process_csv, style="Primary.TButton")
         self.btn_process.grid(row=0, column=1, sticky="e")
 
         # Progress bar (advances during processing)
         self.progress = ttk.Progressbar(main, mode="determinate", maximum=100, style="App.Horizontal.TProgressbar")
         self.progress.grid(row=4, column=0, sticky="ew", pady=(14, 0))
 
+        result_section = ttk.LabelFrame(
+            main,
+            text="처리 결과 · 무엇이 정리되었나요?",
+            style="Card.TLabelframe",
+            padding=(12, 10),
+        )
+        result_section.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
+        result_section.columnconfigure(0, weight=1)
+        result_section.rowconfigure(0, weight=1)
+        self.result_text = tk.Text(
+            result_section,
+            height=8,
+            wrap="word",
+            relief="flat",
+            borderwidth=0,
+            background="#FFFFFF",
+            foreground=text,
+            font=("Segoe UI", 9),
+            padx=6,
+            pady=4,
+            state="disabled",
+        )
+        self.result_text.grid(row=0, column=0, sticky="nsew")
+
         # Status bar
-        self.log_text = tk.StringVar(value="Ready.")
+        self.log_text = tk.StringVar(value="준비됨 · 파일을 고르고 숫자 표기 방식을 선택하세요.")
         status_bar = ttk.Frame(root, style="Status.TFrame", padding=(24, 9))
         status_bar.grid(row=1, column=0, sticky="ew")
         ttk.Label(status_bar, textvariable=self.log_text, style="Status.TLabel").grid(row=0, column=0, sticky="w")
 
+        self._update_number_format_help()
+        self._update_output_hint()
+        self._set_result_text("아직 처리한 파일이 없습니다. 파일을 고르고 ‘정리하고 저장하기’를 누르세요.")
+
     def browse_file(self):
         filename = filedialog.askopenfilename(
-            title="Select CSV/TXT/Excel File",
+            title="CSV, TXT 또는 Excel 파일 선택",
             filetypes=(
                 ("CSV/TXT/Excel files", "*.csv *.txt *.xlsx *.xlsm"),
                 ("All files", "*.*"),
@@ -167,11 +278,126 @@ class CSVModifierApp:
         )
         if filename:
             self.filepath.set(filename)
+            detected_delim = self._detect_delimiter(filename)
+            self._apply_detected_delimiter(detected_delim)
             self.update_max_columns()
+            self._update_output_hint()
+
+    @staticmethod
+    def _number_mode(selection):
+        """Map friendly combobox text to the parser's stable internal mode."""
+        return 'Polish' if str(selection).startswith('Polish') else 'English'
+
+    @staticmethod
+    def _output_format(selection):
+        """Map friendly combobox text to the stable output format identifier."""
+        return 'Excel (.xlsx)' if str(selection).startswith('Excel') else 'CSV'
+
+    def _update_number_format_help(self, event=None):
+        if self._number_mode(self.num_format.get()) == 'Polish':
+            message = "Polish: 1 234,56 · 공백/점은 천 단위, 쉼표는 소수점입니다."
+        else:
+            message = "English: 1,234.56 · 쉼표는 천 단위, 점은 소수점입니다."
+        self.number_format_help.set(message)
+
+    @staticmethod
+    def _output_extension(output_fmt):
+        return '.xlsx' if output_fmt == 'Excel (.xlsx)' else '.csv'
+
+    @classmethod
+    def _build_output_path(cls, file_path, output_fmt, timestamp=None):
+        """Create a timestamped output path and avoid overwriting a same-minute run."""
+        stamp = (timestamp or datetime.now()).strftime('%Y%m%d_%H%M')
+        extension = cls._output_extension(output_fmt)
+        directory = os.path.dirname(file_path)
+        base_name = f"processed_output_{stamp}"
+        candidate = os.path.join(directory, f"{base_name}{extension}")
+        sequence = 2
+        while os.path.exists(candidate):
+            candidate = os.path.join(directory, f"{base_name}_{sequence:02d}{extension}")
+            sequence += 1
+        return candidate
+
+    def _update_output_hint(self, event=None):
+        output_fmt = self._output_format(self.out_format.get())
+        extension = self._output_extension(output_fmt)
+        expected_name = f"processed_output_YYYYMMDD_HHMM{extension}"
+        self.output_format_help.set(
+            "CSV는 텍스트 파일입니다. Excel은 바로 열어 계산할 수 있습니다."
+            if output_fmt == 'CSV'
+            else "Excel 파일로 저장합니다. 큰 숫자는 정확도를 위해 텍스트로 보존될 수 있습니다."
+        )
+        if self.filepath.get():
+            self.output_hint.set(f"저장 위치: 원본과 같은 폴더 · 이름: {expected_name}")
+        else:
+            self.output_hint.set(f"저장 파일 이름: {expected_name}")
+
+    def _set_result_text(self, message):
+        """Show the processing explanation inside the app instead of a success popup."""
+        result_widget = getattr(self, 'result_text', None)
+        if result_widget is None:
+            return
+        result_widget.configure(state='normal')
+        result_widget.delete('1.0', tk.END)
+        result_widget.insert('1.0', message)
+        result_widget.configure(state='disabled')
 
     @staticmethod
     def _is_excel(file_path):
         return os.path.splitext(file_path)[1].lower() in ('.xlsx', '.xlsm', '.xls')
+
+    def _on_delimiter_user_change(self, event=None):
+        """Remember an explicit delimiter choice so file selection cannot overwrite it."""
+        self._delimiter_user_set = True
+        self.update_max_columns(event)
+
+    def _apply_detected_delimiter(self, detected_delim):
+        """Apply an inferred delimiter only while the user has not chosen one."""
+        if not detected_delim or getattr(self, '_delimiter_user_set', False):
+            return False
+        self.delimiter.set('\\t' if detected_delim == '\t' else detected_delim)
+        return True
+
+    def _detect_delimiter(self, file_path, sample_rows=50):
+        """Infer a delimiter from logical CSV records, not physical text lines.
+
+        This deliberately tolerates introductory one-column rows and quoted
+        multi-line cells. The candidate with the most stable non-trivial row
+        width wins; a one-column candidate is never selected automatically.
+        """
+        if self._is_excel(file_path):
+            return None
+        try:
+            enc = self._detect_encoding(file_path)
+            candidates = [';', ',', '\t', '|']
+            best_delimiter = None
+            best_score = None
+            for cand in candidates:
+                with open(file_path, 'r', encoding=enc, newline='') as f:
+                    reader = csv.reader(f, delimiter=cand)
+                    rows = []
+                    for row in reader:
+                        if row:
+                            rows.append(row)
+                        if len(rows) >= sample_rows:
+                            break
+                if not rows:
+                    continue
+
+                widths = [len(row) for row in rows]
+                width, count = max(Counter(widths).items(), key=lambda item: (item[1], item[0]))
+                if width <= 1:
+                    continue
+
+                # Ratio first prevents a one-off delimiter in prose from
+                # beating a consistently structured file; width breaks ties.
+                score = (count / len(widths), count, width)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_delimiter = cand
+            return best_delimiter
+        except Exception:
+            return None
 
     @staticmethod
     def _normalize_delim(delim):
@@ -330,29 +556,176 @@ class CSVModifierApp:
         except Exception as e:
             self.log_text.set("Error detecting columns (Encoding/Delimiter issue)")
 
-    def parse_number(self, val, mode):
+    @staticmethod
+    def parse_number(val, mode):
+        """Parse a safely validated English or Polish number into Decimal.
+
+        A parsed value retains its source decimal scale so CSV and Excel
+        exporters can preserve values such as ``500,00`` cell by cell.
+        Invalid or identifier-like values deliberately remain text.
+        """
         if not isinstance(val, str):
             return val
         v = val.strip()
         if not v:
             return val
-        if mode == 'English':
-            if not _EN_NUM_RE.fullmatch(v):
-                return val
-            num_str = v.replace(',', '')
-        elif mode == 'Polish':
-            if not _PL_NUM_RE.fullmatch(v):
-                return val
-            num_str = v.replace(' ', '').replace('.', '').replace(',', '.')
-        else:
+
+        v_norm = v.replace('\u00A0', ' ').replace('\u202F', ' ').replace('\u2212', '-')
+
+        sign = ''
+        if v_norm.startswith('-') or v_norm.startswith('+'):
+            sign = v_norm[0]
+            v_norm = v_norm[1:]
+
+        if not v_norm:
             return val
 
-        if '.' not in num_str:
-            return int(num_str)
-        integer_part, fractional_part = num_str.split('.', 1)
-        if set(fractional_part) == {'0'}:
-            return int(integer_part)
-        return float(num_str)
+        if mode == 'Polish':
+            if not re.fullmatch(r'[0-9 \.,]+', v_norm):
+                return val
+
+            parts = v_norm.split(',')
+            if len(parts) > 2:
+                return val
+
+            int_part = parts[0]
+            frac_part = parts[1] if len(parts) == 2 else None
+
+            if frac_part == '':
+                return val
+
+            if not int_part and frac_part:
+                int_part = '0'
+
+            if ' ' in int_part and '.' in int_part:
+                return val
+
+            sep = ' ' if ' ' in int_part else '.' if '.' in int_part else None
+            if sep:
+                groups = int_part.split(sep)
+                if not groups[0] or len(groups[0]) > 3:
+                    return val
+                for g in groups[1:]:
+                    if len(g) != 3:
+                        return val
+                int_part = ''.join(groups)
+
+            if frac_part and ('.' in frac_part or ' ' in frac_part):
+                return val
+
+            if len(int_part) > 1 and int_part.startswith('0'):
+                return val
+
+            orig_decimals = len(frac_part) if frac_part else 0
+            dec_str = f"{sign}{int_part}.{frac_part}" if frac_part else f"{sign}{int_part}"
+
+            try:
+                d = decimal.Decimal(dec_str)
+                return ParsedNumber(d, orig_decimals, val)
+            except decimal.InvalidOperation:
+                return val
+
+        elif mode == 'English':
+            if not re.fullmatch(r'[0-9\.,]+', v_norm):
+                return val
+
+            parts = v_norm.split('.')
+            if len(parts) > 2:
+                return val
+
+            int_part = parts[0]
+            frac_part = parts[1] if len(parts) == 2 else None
+
+            if frac_part == '':
+                return val
+
+            if not int_part and frac_part:
+                int_part = '0'
+
+            if ',' in int_part:
+                groups = int_part.split(',')
+                if not groups[0] or len(groups[0]) > 3:
+                    return val
+                for g in groups[1:]:
+                    if len(g) != 3:
+                        return val
+                int_part = ''.join(groups)
+
+            if frac_part and ',' in frac_part:
+                return val
+
+            if len(int_part) > 1 and int_part.startswith('0'):
+                return val
+
+            orig_decimals = len(frac_part) if frac_part else 0
+            dec_str = f"{sign}{int_part}.{frac_part}" if frac_part else f"{sign}{int_part}"
+
+            try:
+                d = decimal.Decimal(dec_str)
+                return ParsedNumber(d, orig_decimals, val)
+            except decimal.InvalidOperation:
+                return val
+
+        return val
+
+    @staticmethod
+    def _decimal_significant_digits(value):
+        """Count significant decimal digits without treating trailing scale zeros as precision."""
+        normalized = value.normalize()
+        digits = normalized.as_tuple().digits
+        return 1 if all(digit == 0 for digit in digits) else len(digits)
+
+    @classmethod
+    def _requires_excel_text(cls, value):
+        """Excel stores at most 15 significant decimal digits reliably."""
+        return cls._decimal_significant_digits(value.value) > 15
+
+    @staticmethod
+    def _format_csv_value(value, decimal_separator):
+        """Render a converted value without losing its original decimal scale."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, ParsedNumber):
+            text = f"{value.value:.{value.orig_decimals}f}"
+            return text.replace('.', decimal_separator) if decimal_separator != '.' else text
+        if isinstance(value, float):
+            if pd.isna(value):
+                return ''
+            text = repr(value)
+            return text.replace('.', decimal_separator) if decimal_separator != '.' else text
+        return value
+
+    @classmethod
+    def _write_excel_output(cls, df, out_path):
+        """Write converted data and return how many values were protected as text."""
+        import openpyxl
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(list(df.columns))
+        large_numbers_as_text = 0
+
+        for row in df.itertuples(index=False):
+            output_row = []
+            for value in row:
+                if isinstance(value, ParsedNumber):
+                    if cls._requires_excel_text(value):
+                        large_numbers_as_text += 1
+                        output_row.append(value.orig_text)
+                    else:
+                        output_row.append(float(value.value))
+                else:
+                    output_row.append(value)
+            worksheet.append(output_row)
+
+        for row_index, row in enumerate(df.itertuples(index=False), start=2):
+            for column_index, value in enumerate(row, start=1):
+                if isinstance(value, ParsedNumber) and not cls._requires_excel_text(value):
+                    cell = worksheet.cell(row=row_index, column=column_index)
+                    cell.number_format = '0' if value.orig_decimals == 0 else '0.' + ('0' * value.orig_decimals)
+
+        workbook.save(out_path)
+        return large_numbers_as_text
 
     def parse_date(self, val):
         """Try to parse a string into a date. Returns a date on success, else the original value."""
@@ -395,34 +768,34 @@ class CSVModifierApp:
     def process_csv(self):
         file_path = self.filepath.get()
         delim = self._normalize_delim(self.delimiter.get())
-        mode = self.num_format.get()
-        output_fmt = self.out_format.get()
+        mode = self._number_mode(self.num_format.get())
+        output_fmt = self._output_format(self.out_format.get())
 
         if not file_path or not os.path.exists(file_path):
-            messagebox.showerror("Error", "Please select a valid file.")
+            messagebox.showerror("파일을 선택해 주세요", "정리할 CSV, TXT 또는 Excel 파일을 선택해 주세요.")
             return
 
         is_excel = self._is_excel(file_path)
         if not is_excel and (not delim or len(delim) != 1):
-            messagebox.showerror("Error", "Delimiter must be a single character (use \\t for tab).")
+            messagebox.showerror("구분 기호 확인", "구분 기호는 한 글자여야 합니다. 탭은 \\t로 입력하세요.")
             return
 
         try:
             max_c = int(self.max_cols.get())
         except ValueError:
-            messagebox.showerror("Error", "Max Columns must be a number.")
+            messagebox.showerror("열 개수 확인", "표의 열 개수에는 숫자를 입력해 주세요.")
             return
 
         if max_c <= 0:
-            messagebox.showerror("Error", "Max Columns must be greater than 0.")
+            messagebox.showerror("열 개수 확인", "표의 열 개수는 1 이상이어야 합니다.")
             return
 
-        self._set_progress(0, "Reading file...")
+        self._set_progress(0, "파일을 읽는 중...")
         self.root.update()
 
         try:
             rows, enc = self.read_file_lines(file_path, delim)
-            self._set_progress(10, f"Read {len(rows):,} rows. Scanning...")
+            self._set_progress(10, f"{len(rows):,}개 행을 읽었습니다. 표 구조를 확인하는 중...")
 
             # Find the start index (first row that has max_cols) to skip garbage
             start_idx = 0
@@ -451,8 +824,8 @@ class CSVModifierApp:
                 padded_rows.append(r)
 
             if not padded_rows:
-                messagebox.showwarning("Warning", "No rows matched the max columns criteria.")
-                self.log_text.set("Warning: No valid rows found.")
+                messagebox.showwarning("처리할 표를 찾지 못했습니다", "선택한 열 개수와 맞는 행이 없습니다.")
+                self.log_text.set("처리할 표를 찾지 못했습니다.")
                 return
 
             # Promote the first matching row to the header, remaining rows are data
@@ -460,8 +833,8 @@ class CSVModifierApp:
             body_rows = padded_rows[1:]
 
             if not body_rows:
-                messagebox.showwarning("Warning", "Header found but no data rows to process.")
-                self.log_text.set("Warning: No data rows after header.")
+                messagebox.showwarning("데이터가 없습니다", "열 이름은 찾았지만 정리할 데이터 행이 없습니다.")
+                self.log_text.set("열 이름 다음에 데이터가 없습니다.")
                 return
 
             # Build unique, non-empty column names from the header
@@ -485,14 +858,11 @@ class CSVModifierApp:
             # that also tallies what changed and records each column's original
             # decimal precision (used to keep values like "500,00" intact on export).
             dec_sep = ',' if mode == 'Polish' else '.'
-            stats = {'numbers': 0, 'dates': 0, 'flattened': 0}
-            col_decimals = [0] * len(col_names)
+            stats = {'numbers': 0, 'dates': 0, 'flattened': 0, 'large_numbers_as_text': 0}
             ncols = len(df.columns)
 
             for ci, col in enumerate(df.columns):
-                col_state = {'max_dec': 0}
-
-                def convert(x, cs=col_state):
+                def convert(x):
                     if not isinstance(x, str):
                         return x  # Excel input arrives already typed (dates, numbers)
                     # Flatten in-cell line breaks — including the exotic ones Excel
@@ -506,83 +876,55 @@ class CSVModifierApp:
                         stats['dates'] += 1
                         return d
                     n = self.parse_number(x, mode)
-                    if not isinstance(n, str):
+                    if isinstance(n, ParsedNumber):
                         stats['numbers'] += 1
-                        if type(n) is float:
-                            cell = x.strip()
-                            if dec_sep in cell:
-                                w = len(cell.rsplit(dec_sep, 1)[-1])
-                                if w > cs['max_dec']:
-                                    cs['max_dec'] = w
+                        return n
                     return n
 
                 df[col] = df[col].map(convert)
-                col_decimals[ci] = col_state['max_dec']
                 self._set_progress(10 + int(70 * (ci + 1) / ncols),
-                                   f"Converting columns... ({ci + 1}/{ncols})")
+                                   f"숫자와 날짜를 정리하는 중... ({ci + 1}/{ncols}개 열)")
 
             # Replace NaNs with empty strings
             df = df.fillna('')
 
             # Export
-            self._set_progress(85, "Saving output...")
+            self._set_progress(85, "새 파일을 저장하는 중...")
+            out_path = self._build_output_path(file_path, output_fmt)
             if output_fmt == "Excel (.xlsx)":
-                # Excel keeps real numeric/date types so the values stay computable.
-                out_path = os.path.join(os.path.dirname(file_path), 'processed_output.xlsx')
-                df.to_excel(out_path, index=False)
+                stats['large_numbers_as_text'] = self._write_excel_output(df, out_path)
             else:
-                out_path = os.path.join(os.path.dirname(file_path), 'processed_output.csv')
                 sep = ';' if mode == 'Polish' else ','
-
-                # Preserve each column's original decimal precision so values like
-                # Polish "500,00" are written back as "500,00" instead of "500,0".
                 out_df = df.copy()
-                for ci, col in enumerate(out_df.columns):
-                    width = col_decimals[ci]
-
-                    def fmt(x, width=width):
-                        if isinstance(x, bool):
-                            return x
-                        if isinstance(x, float):
-                            if pd.isna(x):
-                                return ''
-                            s = f"{x:.{width}f}"
-                            # width comes from decimals seen while parsing strings;
-                            # Excel-native floats never went through that, so fall
-                            # back to full precision rather than silently rounding.
-                            if float(s) != x:
-                                s = repr(float(x))
-                            return s.replace('.', dec_sep) if dec_sep != '.' else s
-                        return x
-
-                    out_df[col] = out_df[col].map(fmt)
+                for col in out_df.columns:
+                    out_df[col] = out_df[col].map(
+                        lambda value: self._format_csv_value(value, dec_sep)
+                    )
 
                 out_df.to_csv(out_path, sep=sep, index=False, encoding='utf-8-sig')
 
-            self._set_progress(100, "Done.")
+            self._set_progress(100, "완료되었습니다.")
 
-            # Concise report of what the run actually changed
             summary = (
-                "Processing complete!\n\n"
-                f"• Data rows: {len(body_rows):,}\n"
-                f"• Columns: {ncols} (first valid row promoted to header)\n"
-                f"• Garbage rows skipped: {garbage_skipped}\n"
-                f"• Numbers converted: {stats['numbers']:,} cells\n"
-                f"• Dates converted: {stats['dates']:,} cells\n"
-                f"• Multi-line cells flattened: {stats['flattened']:,}\n"
-                f"• Split rows rejoined: {rows_repaired:,}\n"
-                f"• Encoding: {enc}\n\n"
-                f"Saved to:\n{out_path}"
+                f"저장 완료 · {os.path.basename(out_path)}\n"
+                f"저장 위치: {os.path.dirname(out_path)}\n\n"
+                "이번에 정리한 내용\n"
+                f"• 데이터 행 {len(body_rows):,}개와 열 {ncols}개를 새 파일로 저장했습니다.\n"
+                f"• 위쪽의 표가 아닌 행 {garbage_skipped:,}개를 건너뛰고, 첫 번째 정상 행을 열 이름으로 사용했습니다.\n"
+                f"• 숫자 표기 {stats['numbers']:,}개와 날짜 {stats['dates']:,}개를 읽기 쉬운 값으로 정리했습니다.\n"
+                f"• 셀 안의 줄바꿈 {stats['flattened']:,}개를 한 줄 텍스트로 바꿨습니다.\n"
+                f"• 여러 줄로 끊어진 행 {rows_repaired:,}개를 다시 이었습니다.\n"
+                f"• Excel 정확도 보호를 위해 큰 숫자 {stats['large_numbers_as_text']:,}개를 텍스트로 보존했습니다.\n"
+                f"• 읽은 파일 인코딩: {enc}"
             )
             self.log_text.set(
-                f"Done · {len(body_rows):,} rows · {stats['numbers']:,} numbers · "
-                f"{stats['dates']:,} dates → {os.path.basename(out_path)}"
+                f"완료 · {len(body_rows):,}개 행 저장 → {os.path.basename(out_path)}"
             )
-            messagebox.showinfo("Success", summary)
+            self._set_result_text(summary)
 
         except Exception as e:
-            messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
-            self.log_text.set("Error during processing.")
+            messagebox.showerror("처리 중 오류", f"파일을 정리하지 못했습니다.\n\n{str(e)}")
+            self.log_text.set("처리 중 오류가 발생했습니다.")
         finally:
             self._set_progress(0)
 
