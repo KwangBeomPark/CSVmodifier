@@ -2,4 +2,5 @@ build/
 dist/
 __pycache__/
 *.spec
+!csv_modifier.spec
 *.pyc
