@@ -9,7 +9,7 @@ from datetime import datetime
 import decimal
 from collections import Counter
 
-__version__ = "1.5.1"
+__version__ = "1.5.2"
 
 class ParsedNumber:
     __slots__ = ['value', 'orig_decimals', 'orig_text']
@@ -39,7 +39,7 @@ _LANGUAGE_CODES = {
 
 _UI_TEXT = {
     "ko": {
-        "header_subtitle": "파일을 정리하고 숫자 표기를 맞춘 새 파일을 만듭니다.",
+        "header_subtitle": "열 구분이 불명확하거나 셀 안 줄바꿈이 있는 CSV를 정리합니다.",
         "language_label": "언어",
         "section_file": "1. 원본 파일 선택",
         "browse": "파일 찾기...",
@@ -98,7 +98,7 @@ _UI_TEXT = {
         "detect_columns_error": "열 개수를 자동으로 찾지 못했습니다. 구분 기호를 확인하세요.",
     },
     "en": {
-        "header_subtitle": "Clean the file, normalize number formats, and save a new copy.",
+        "header_subtitle": "Fix unclear CSV columns and line breaks inside text cells.",
         "language_label": "Language",
         "section_file": "1. Choose the source file",
         "browse": "Browse...",
@@ -157,7 +157,7 @@ _UI_TEXT = {
         "detect_columns_error": "Could not detect the number of columns. Check the separator.",
     },
     "pl": {
-        "header_subtitle": "Program porządkuje plik, ujednolica format liczb i zapisuje nową kopię.",
+        "header_subtitle": "Porządkuje niejasne kolumny CSV i podziały wierszy w komórkach.",
         "language_label": "Język",
         "section_file": "1. Wybierz plik źródłowy",
         "browse": "Wybierz plik...",

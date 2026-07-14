@@ -2,8 +2,13 @@
 
 # CSV Modifier
 
-CSV Modifier is an intuitive, easy-to-use CSV / TXT / Excel conversion and cleaning program designed for users without any coding experience.
-It is specifically built to solve the following common issues:
+![CSV Modifier workflow: unclear columns and line breaks are converted into a clean table](manual.png)
+
+> **Fix CSV files that Excel or Power Query cannot read cleanly.**
+
+CSV Modifier is an intuitive CSV / TXT / Excel cleaning tool for non-technical users. It was built for files whose column separators are unclear or inconsistent, and for long text cells containing Enter/line-break characters that make one record look like several rows when opened in Excel or Power Query. It finds the intended table structure, repairs broken records, and creates a clean output with one record per row.
+
+It also provides the following capabilities:
 
 ## Key Features
 - **Safe Data Parsing**: Even if text (strings) contain line breaks (Enter), it reads them as a single cell without errors, just like Excel or Power Query. When exporting, internal cell line breaks (including special characters like vertical tab `\x0b`, U+2028, etc.) are replaced with spaces so that one record is stored in exactly one line.
@@ -26,9 +31,9 @@ It is specifically built to solve the following common issues:
 ## Download & How to Run
 You can download the standalone executable file (`.exe`) from the link below and use it immediately. No need to install Python or any additional libraries.
 
-👉 **[Download Latest Version (v1.5.1)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.5.1)**
+👉 **[Download Latest Version (v1.5.2)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.5.2)**
 
-1. Go to the link and download the `App04_csv_modifier_v1.5.1.exe` file.
+1. Go to the link and download the `App04_csv_modifier_v1.5.2.exe` file.
 2. Double-click the executable to open it.
 3. Select the file to convert, use the on-screen examples to choose the number format, then click **[정리하고 저장하기]**.
 4. A timestamped `processed_output_YYYYMMDD_HHMM.csv` (or `.xlsx`) will be created in the same folder as the original file.
