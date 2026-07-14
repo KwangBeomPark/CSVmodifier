@@ -26,9 +26,9 @@ It is specifically built to solve the following common issues:
 ## Download & How to Run
 You can download the standalone executable file (`.exe`) from the link below and use it immediately. No need to install Python or any additional libraries.
 
-👉 **[Download Latest Version (v1.5.0)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.5.0)**
+👉 **[Download Latest Version (v1.5.1)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.5.1)**
 
-1. Go to the link and download the `App04_csv_modifier_v1.5.0.exe` file.
+1. Go to the link and download the `App04_csv_modifier_v1.5.1.exe` file.
 2. Double-click the executable to open it.
 3. Select the file to convert, use the on-screen examples to choose the number format, then click **[정리하고 저장하기]**.
 4. A timestamped `processed_output_YYYYMMDD_HHMM.csv` (or `.xlsx`) will be created in the same folder as the original file.

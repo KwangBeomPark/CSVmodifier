@@ -9,7 +9,7 @@ from datetime import datetime
 import decimal
 from collections import Counter
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 class ParsedNumber:
     __slots__ = ['value', 'orig_decimals', 'orig_text']
@@ -31,14 +31,191 @@ _LINEBREAK_RE = re.compile('[\r\n\x0b\x0c\x85\u2028\u2029]+')
 _EN_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?')
 _PL_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?')
 
-_NUMBER_FORMAT_OPTIONS = (
-    "English · 1,234.56",
-    "Polish · 1 234,56",
-)
-_OUTPUT_FORMAT_OPTIONS = (
-    "CSV 텍스트 파일 (.csv)",
-    "Excel 통합 문서 (.xlsx)",
-)
+_LANGUAGE_CODES = {
+    "English": "en",
+    "한국어": "ko",
+    "Polski": "pl",
+}
+
+_UI_TEXT = {
+    "ko": {
+        "header_subtitle": "파일을 정리하고 숫자 표기를 맞춘 새 파일을 만듭니다.",
+        "language_label": "언어",
+        "section_file": "1. 원본 파일 선택",
+        "browse": "파일 찾기...",
+        "file_info": "CSV, TXT, Excel(.xlsx/.xlsm)을 고르세요. 원본 파일은 바꾸지 않습니다.",
+        "section_import": "2. 파일 읽는 방법",
+        "section_output": "3. 저장 방법",
+        "delimiter_label": "파일 구분 기호",
+        "delimiter_help": "열을 나누는 기호입니다: 쉼표(,), 세미콜론(;), 탭(\\t).",
+        "number_label": "숫자 표기 방식",
+        "number_options": ("영어식 · 1,234.56", "폴란드식 · 1 234,56"),
+        "number_help_english": "영어식: 1,234.56 · 쉼표는 천 단위, 점은 소수점입니다.",
+        "number_help_polish": "폴란드식: 1 234,56 · 공백/점은 천 단위, 쉼표는 소수점입니다.",
+        "columns_label": "표의 열 개수",
+        "columns_help": "파일을 고르면 자동 입력됩니다. 실제 열 수와 다를 때만 바꾸세요.",
+        "output_label": "저장 파일 형식",
+        "output_options": ("CSV 텍스트 파일 (.csv)", "Excel 통합 문서 (.xlsx)"),
+        "output_help_csv": "CSV는 텍스트 파일입니다. Excel은 바로 열어 계산할 수 있습니다.",
+        "output_help_excel": "Excel 파일로 저장합니다. 큰 숫자는 정확도를 위해 텍스트로 보존될 수 있습니다.",
+        "process": "정리하고 저장하기",
+        "result_title": "처리 결과 · 무엇이 정리되었나요?",
+        "ready": "준비됨 · 파일을 고르고 숫자 표기 방식을 선택하세요.",
+        "initial_result": "아직 처리한 파일이 없습니다. 파일을 고르고 ‘정리하고 저장하기’를 누르세요.",
+        "output_hint": "저장 파일 이름: {name}",
+        "output_hint_with_file": "저장 위치: 원본과 같은 폴더 · 이름: {name}",
+        "dialog_title": "CSV, TXT 또는 Excel 파일 선택",
+        "select_file_title": "파일을 선택해 주세요",
+        "select_file_message": "정리할 CSV, TXT 또는 Excel 파일을 선택해 주세요.",
+        "delimiter_title": "구분 기호 확인",
+        "delimiter_message": "구분 기호는 한 글자여야 합니다. 탭은 \\t로 입력하세요.",
+        "columns_title": "열 개수 확인",
+        "columns_number": "표의 열 개수에는 숫자를 입력해 주세요.",
+        "columns_positive": "표의 열 개수는 1 이상이어야 합니다.",
+        "reading": "파일을 읽는 중...",
+        "scanning": "{rows}개 행을 읽었습니다. 표 구조를 확인하는 중...",
+        "converting": "숫자와 날짜를 정리하는 중... ({current}/{total}개 열)",
+        "saving": "새 파일을 저장하는 중...",
+        "done": "완료되었습니다.",
+        "no_table_title": "처리할 표를 찾지 못했습니다",
+        "no_table_message": "선택한 열 개수와 맞는 행이 없습니다.",
+        "no_data_title": "데이터가 없습니다",
+        "no_data_message": "열 이름은 찾았지만 정리할 데이터 행이 없습니다.",
+        "error_title": "처리 중 오류",
+        "error_message": "파일을 정리하지 못했습니다.\n\n{error}",
+        "summary_saved": "저장 완료 · {name}",
+        "summary_location": "저장 위치: {path}",
+        "summary_title": "이번에 정리한 내용",
+        "summary_rows": "• 데이터 행 {rows}개와 열 {columns}개를 새 파일로 저장했습니다.",
+        "summary_garbage": "• 위쪽의 표가 아닌 행 {count}개를 건너뛰고, 첫 번째 정상 행을 열 이름으로 사용했습니다.",
+        "summary_values": "• 숫자 표기 {numbers}개와 날짜 {dates}개를 읽기 쉬운 값으로 정리했습니다.",
+        "summary_flattened": "• 셀 안의 줄바꿈 {count}개를 한 줄 텍스트로 바꿨습니다.",
+        "summary_repaired": "• 여러 줄로 끊어진 행 {count}개를 다시 이었습니다.",
+        "summary_large": "• Excel 정확도 보호를 위해 큰 숫자 {count}개를 텍스트로 보존했습니다.",
+        "summary_encoding": "• 읽은 파일 인코딩: {encoding}",
+        "status_done": "완료 · {rows}개 행 저장 → {name}",
+        "detected_columns": "열 개수 자동 감지: {columns}개 · 인코딩: {encoding}",
+        "detect_columns_error": "열 개수를 자동으로 찾지 못했습니다. 구분 기호를 확인하세요.",
+    },
+    "en": {
+        "header_subtitle": "Clean the file, normalize number formats, and save a new copy.",
+        "language_label": "Language",
+        "section_file": "1. Choose the source file",
+        "browse": "Browse...",
+        "file_info": "Choose a CSV, TXT, or Excel (.xlsx/.xlsm) file. The original is never changed.",
+        "section_import": "2. How to read the file",
+        "section_output": "3. How to save the result",
+        "delimiter_label": "Column separator",
+        "delimiter_help": "Column separator: comma (,), semicolon (;), or tab (\\t).",
+        "number_label": "Number format",
+        "number_options": ("English · 1,234.56", "Polish · 1 234,56"),
+        "number_help_english": "English: 1,234.56 · comma for thousands, dot for decimals.",
+        "number_help_polish": "Polish: 1 234,56 · space/dot for thousands, comma for decimals.",
+        "columns_label": "Number of columns",
+        "columns_help": "Detected after you choose a file. Change it only if it differs from the table.",
+        "output_label": "Save as",
+        "output_options": ("CSV text file (.csv)", "Excel workbook (.xlsx)"),
+        "output_help_csv": "CSV is a text file. Excel can be opened and calculated immediately.",
+        "output_help_excel": "Saves an Excel file. Very large numbers may be kept as text for accuracy.",
+        "process": "Clean and save",
+        "result_title": "Result · What was cleaned?",
+        "ready": "Ready · Choose a file and its number format.",
+        "initial_result": "No file has been processed yet. Choose a file, then select ‘Clean and save’.",
+        "output_hint": "Output file name: {name}",
+        "output_hint_with_file": "Saved beside the source file · name: {name}",
+        "dialog_title": "Choose a CSV, TXT, or Excel file",
+        "select_file_title": "Choose a file",
+        "select_file_message": "Choose the CSV, TXT, or Excel file you want to clean.",
+        "delimiter_title": "Check the column separator",
+        "delimiter_message": "The separator must be one character. Enter \\t for a tab.",
+        "columns_title": "Check the number of columns",
+        "columns_number": "Enter a number for the number of columns.",
+        "columns_positive": "The number of columns must be at least 1.",
+        "reading": "Reading the file...",
+        "scanning": "Read {rows} rows. Checking the table structure...",
+        "converting": "Cleaning numbers and dates... ({current}/{total} columns)",
+        "saving": "Saving the new file...",
+        "done": "Finished.",
+        "no_table_title": "No table found",
+        "no_table_message": "No rows match the selected number of columns.",
+        "no_data_title": "No data rows found",
+        "no_data_message": "A header was found, but there are no data rows to clean.",
+        "error_title": "Processing error",
+        "error_message": "The file could not be cleaned.\n\n{error}",
+        "summary_saved": "Saved · {name}",
+        "summary_location": "Location: {path}",
+        "summary_title": "What was cleaned",
+        "summary_rows": "• Saved {rows} data rows and {columns} columns in a new file.",
+        "summary_garbage": "• Skipped {count} non-table rows at the top and used the first complete row as headers.",
+        "summary_values": "• Normalized {numbers} number values and {dates} dates.",
+        "summary_flattened": "• Changed {count} in-cell line breaks into one-line text.",
+        "summary_repaired": "• Rejoined {count} records that had been split across lines.",
+        "summary_large": "• Kept {count} very large numbers as text to protect Excel accuracy.",
+        "summary_encoding": "• Source encoding: {encoding}",
+        "status_done": "Finished · saved {rows} rows → {name}",
+        "detected_columns": "Detected {columns} columns · encoding: {encoding}",
+        "detect_columns_error": "Could not detect the number of columns. Check the separator.",
+    },
+    "pl": {
+        "header_subtitle": "Program porządkuje plik, ujednolica format liczb i zapisuje nową kopię.",
+        "language_label": "Język",
+        "section_file": "1. Wybierz plik źródłowy",
+        "browse": "Wybierz plik...",
+        "file_info": "Wybierz plik CSV, TXT lub Excel (.xlsx/.xlsm). Oryginał nie zostanie zmieniony.",
+        "section_import": "2. Sposób odczytu pliku",
+        "section_output": "3. Sposób zapisu wyniku",
+        "delimiter_label": "Separator kolumn",
+        "delimiter_help": "Separator kolumn: przecinek (,), średnik (;) albo tabulator (\\t).",
+        "number_label": "Format liczb",
+        "number_options": ("Format angielski · 1,234.56", "Format polski · 1 234,56"),
+        "number_help_english": "Angielski: 1,234.56 · przecinek dla tysięcy, kropka dla części dziesiętnej.",
+        "number_help_polish": "Polski: 1 234,56 · spacja/kropka dla tysięcy, przecinek dla części dziesiętnej.",
+        "columns_label": "Liczba kolumn",
+        "columns_help": "Wykrywana po wyborze pliku. Zmień ją tylko, gdy nie pasuje do tabeli.",
+        "output_label": "Zapisz jako",
+        "output_options": ("Plik tekstowy CSV (.csv)", "Skoroszyt Excel (.xlsx)"),
+        "output_help_csv": "CSV to plik tekstowy. Excel można od razu otworzyć i używać do obliczeń.",
+        "output_help_excel": "Zapisuje plik Excel. Bardzo duże liczby mogą pozostać tekstem dla zachowania dokładności.",
+        "process": "Uporządkuj i zapisz",
+        "result_title": "Wynik · Co zostało uporządkowane?",
+        "ready": "Gotowe · wybierz plik i jego format liczb.",
+        "initial_result": "Nie przetworzono jeszcze pliku. Wybierz plik, a następnie „Uporządkuj i zapisz”.",
+        "output_hint": "Nazwa pliku wynikowego: {name}",
+        "output_hint_with_file": "Zapis obok pliku źródłowego · nazwa: {name}",
+        "dialog_title": "Wybierz plik CSV, TXT lub Excel",
+        "select_file_title": "Wybierz plik",
+        "select_file_message": "Wybierz plik CSV, TXT lub Excel, który chcesz uporządkować.",
+        "delimiter_title": "Sprawdź separator kolumn",
+        "delimiter_message": "Separator musi być jednym znakiem. Dla tabulatora wpisz \\t.",
+        "columns_title": "Sprawdź liczbę kolumn",
+        "columns_number": "Wprowadź liczbę kolumn jako liczbę.",
+        "columns_positive": "Liczba kolumn musi wynosić co najmniej 1.",
+        "reading": "Odczytywanie pliku...",
+        "scanning": "Odczytano {rows} wierszy. Sprawdzanie struktury tabeli...",
+        "converting": "Porządkowanie liczb i dat... ({current}/{total} kolumn)",
+        "saving": "Zapisywanie nowego pliku...",
+        "done": "Gotowe.",
+        "no_table_title": "Nie znaleziono tabeli",
+        "no_table_message": "Żaden wiersz nie pasuje do wybranej liczby kolumn.",
+        "no_data_title": "Brak wierszy danych",
+        "no_data_message": "Znaleziono nagłówek, ale nie ma danych do uporządkowania.",
+        "error_title": "Błąd przetwarzania",
+        "error_message": "Nie udało się uporządkować pliku.\n\n{error}",
+        "summary_saved": "Zapisano · {name}",
+        "summary_location": "Lokalizacja: {path}",
+        "summary_title": "Co zostało uporządkowane",
+        "summary_rows": "• Zapisano {rows} wierszy danych i {columns} kolumn w nowym pliku.",
+        "summary_garbage": "• Pominięto {count} wierszy spoza tabeli na początku i użyto pierwszego pełnego wiersza jako nagłówków.",
+        "summary_values": "• Ujednolicono {numbers} wartości liczbowych i {dates} dat.",
+        "summary_flattened": "• Zamieniono {count} podziałów linii wewnątrz komórek na tekst jednoliniowy.",
+        "summary_repaired": "• Połączono ponownie {count} rekordów podzielonych między wiersze.",
+        "summary_large": "• Zachowano {count} bardzo dużych liczb jako tekst, aby chronić dokładność Excela.",
+        "summary_encoding": "• Kodowanie pliku źródłowego: {encoding}",
+        "status_done": "Gotowe · zapisano {rows} wierszy → {name}",
+        "detected_columns": "Wykryto {columns} kolumn · kodowanie: {encoding}",
+        "detect_columns_error": "Nie udało się wykryć liczby kolumn. Sprawdź separator.",
+    },
+}
 
 class CSVModifierApp:
     @staticmethod
@@ -49,6 +226,8 @@ class CSVModifierApp:
 
     def __init__(self, root):
         self.root = root
+        self.language = tk.StringVar(value="English")
+        self._last_result = None
         self.root.title(f"CSV Modifier v{__version__}")
         self.root.geometry("820x760")
         self.root.minsize(700, 650)
@@ -126,96 +305,116 @@ class CSVModifierApp:
                 row=0, column=0, rowspan=2, sticky="w", padx=(0, 14)
             )
             title_column = 1
-        ttk.Label(header, text="CSV Modifier", style="Header.Title.TLabel").grid(row=0, column=title_column, sticky="w")
-        ttk.Label(
+        self.header_title = ttk.Label(header, text="CSV Modifier", style="Header.Title.TLabel")
+        self.header_title.grid(row=0, column=title_column, sticky="w")
+        self.header_subtitle = ttk.Label(
             header,
-            text="파일을 정리하고 숫자 표기를 맞춘 새 파일을 만듭니다.",
             style="Header.Subtitle.TLabel",
-        ).grid(row=1, column=title_column, sticky="w", pady=(3, 0))
+        )
+        self.header_subtitle.grid(row=1, column=title_column, sticky="w", pady=(3, 0))
+        self.language_label = ttk.Label(header, style="Header.Subtitle.TLabel")
+        self.language_label.grid(row=0, column=2, sticky="e", padx=(16, 8))
+        self.language_combo = ttk.Combobox(
+            header,
+            textvariable=self.language,
+            values=tuple(_LANGUAGE_CODES),
+            state="readonly",
+            width=11,
+        )
+        self.language_combo.grid(row=0, column=3, rowspan=2, sticky="e")
+        self.language_combo.bind("<<ComboboxSelected>>", self._apply_language)
 
-        file_section = ttk.LabelFrame(main, text="1. 원본 파일 선택", style="Card.TLabelframe", padding=(18, 14))
-        file_section.grid(row=1, column=0, sticky="ew", pady=(16, 12))
-        file_section.columnconfigure(0, weight=1)
+        self.file_section = ttk.LabelFrame(main, style="Card.TLabelframe", padding=(18, 14))
+        self.file_section.grid(row=1, column=0, sticky="ew", pady=(16, 12))
+        self.file_section.columnconfigure(0, weight=1)
 
         # File Path
         self.filepath = tk.StringVar()
-        self.lbl_file = ttk.Entry(file_section, textvariable=self.filepath, state="readonly")
+        self.lbl_file = ttk.Entry(self.file_section, textvariable=self.filepath, state="readonly")
         self.lbl_file.grid(row=0, column=0, sticky="ew")
-        ttk.Button(file_section, text="파일 찾기...", command=self.browse_file, style="Secondary.TButton").grid(row=0, column=1, padx=(10, 0))
-        ttk.Label(
-            file_section,
-            text="CSV, TXT, Excel(.xlsx/.xlsm)을 고르세요. 원본 파일은 바꾸지 않습니다.",
+        self.browse_button = ttk.Button(self.file_section, command=self.browse_file, style="Secondary.TButton")
+        self.browse_button.grid(row=0, column=1, padx=(10, 0))
+        self.file_info_label = ttk.Label(
+            self.file_section,
             style="Muted.TLabel",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        )
+        self.file_info_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         settings = ttk.Frame(main, style="App.TFrame")
         settings.grid(row=2, column=0, sticky="nsew")
         settings.columnconfigure(0, weight=1)
         settings.columnconfigure(1, weight=1)
 
-        import_section = ttk.LabelFrame(settings, text="2. 파일 읽는 방법", style="Card.TLabelframe", padding=(18, 14))
-        import_section.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        import_section.columnconfigure(1, weight=1)
+        self.import_section = ttk.LabelFrame(settings, style="Card.TLabelframe", padding=(18, 14))
+        self.import_section.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        self.import_section.columnconfigure(1, weight=1)
 
-        output_section = ttk.LabelFrame(settings, text="3. 저장 방법", style="Card.TLabelframe", padding=(18, 14))
-        output_section.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        output_section.columnconfigure(1, weight=1)
+        self.output_section = ttk.LabelFrame(settings, style="Card.TLabelframe", padding=(18, 14))
+        self.output_section.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        self.output_section.columnconfigure(1, weight=1)
 
         # Delimiter
         self.delimiter = tk.StringVar(value=",")
-        ttk.Label(import_section, text="파일 구분 기호", style="Field.TLabel").grid(row=0, column=0, sticky="w")
-        self.ent_delimiter = ttk.Entry(import_section, textvariable=self.delimiter, width=8)
+        self.delimiter_label = ttk.Label(self.import_section, style="Field.TLabel")
+        self.delimiter_label.grid(row=0, column=0, sticky="w")
+        self.ent_delimiter = ttk.Entry(self.import_section, textvariable=self.delimiter, width=8)
         self.ent_delimiter.grid(row=0, column=1, sticky="ew")
         self._delimiter_user_set = False
         self.ent_delimiter.bind("<KeyRelease>", self._on_delimiter_user_change)
-        ttk.Label(
-            import_section,
-            text="쉼표(,), 세미콜론(;), 탭(\\t) 중 파일 안의 표를 나누는 기호입니다.",
+        self.delimiter_help_label = ttk.Label(
+            self.import_section,
             style="Help.TLabel",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
+            wraplength=260,
+        )
+        self.delimiter_help_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
 
         # Number Format
-        self.num_format = tk.StringVar(value=_NUMBER_FORMAT_OPTIONS[0])
-        ttk.Label(import_section, text="숫자 표기 방식", style="Field.TLabel").grid(row=2, column=0, sticky="w")
+        self.num_format = tk.StringVar(value=_UI_TEXT["ko"]["number_options"][0])
+        self.number_format_label = ttk.Label(self.import_section, style="Field.TLabel")
+        self.number_format_label.grid(row=2, column=0, sticky="w")
         self.combo_format = ttk.Combobox(
-            import_section,
+            self.import_section,
             textvariable=self.num_format,
-            values=_NUMBER_FORMAT_OPTIONS,
+            values=_UI_TEXT["ko"]["number_options"],
             state="readonly",
             width=22,
         )
         self.combo_format.grid(row=2, column=1, sticky="ew")
         self.number_format_help = tk.StringVar()
-        ttk.Label(import_section, textvariable=self.number_format_help, style="Help.TLabel", wraplength=310).grid(
+        self.number_format_help_label = ttk.Label(self.import_section, textvariable=self.number_format_help, style="Help.TLabel", wraplength=260)
+        self.number_format_help_label.grid(
             row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
         self.combo_format.bind("<<ComboboxSelected>>", self._update_number_format_help)
 
         # Max Columns
         self.max_cols = tk.StringVar(value="0")
-        ttk.Label(output_section, text="표의 열 개수", style="Field.TLabel").grid(row=0, column=0, sticky="w")
-        self.ent_max_cols = ttk.Entry(output_section, textvariable=self.max_cols, width=8)
+        self.columns_label = ttk.Label(self.output_section, style="Field.TLabel")
+        self.columns_label.grid(row=0, column=0, sticky="w")
+        self.ent_max_cols = ttk.Entry(self.output_section, textvariable=self.max_cols, width=8)
         self.ent_max_cols.grid(row=0, column=1, sticky="ew")
-        ttk.Label(
-            output_section,
-            text="파일을 고르면 자동으로 채워집니다. 표의 실제 열 수와 다를 때만 바꾸세요.",
+        self.columns_help_label = ttk.Label(
+            self.output_section,
             style="Help.TLabel",
-            wraplength=310,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
+            wraplength=260,
+        )
+        self.columns_help_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
 
         # Output Format
-        self.out_format = tk.StringVar(value=_OUTPUT_FORMAT_OPTIONS[0])
-        ttk.Label(output_section, text="저장 파일 형식", style="Field.TLabel").grid(row=2, column=0, sticky="w")
+        self.out_format = tk.StringVar(value=_UI_TEXT["ko"]["output_options"][0])
+        self.output_format_label = ttk.Label(self.output_section, style="Field.TLabel")
+        self.output_format_label.grid(row=2, column=0, sticky="w")
         self.combo_out_format = ttk.Combobox(
-            output_section,
+            self.output_section,
             textvariable=self.out_format,
-            values=_OUTPUT_FORMAT_OPTIONS,
+            values=_UI_TEXT["ko"]["output_options"],
             state="readonly",
             width=22,
         )
         self.combo_out_format.grid(row=2, column=1, sticky="ew")
         self.output_format_help = tk.StringVar()
-        ttk.Label(output_section, textvariable=self.output_format_help, style="Help.TLabel", wraplength=310).grid(
+        self.output_format_help_label = ttk.Label(self.output_section, textvariable=self.output_format_help, style="Help.TLabel", wraplength=260)
+        self.output_format_help_label.grid(
             row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
         self.combo_out_format.bind("<<ComboboxSelected>>", self._update_output_hint)
@@ -223,28 +422,27 @@ class CSVModifierApp:
         action_area = ttk.Frame(main, style="App.TFrame")
         action_area.grid(row=3, column=0, sticky="ew", pady=(16, 0))
         action_area.columnconfigure(0, weight=1)
-        self.output_hint = tk.StringVar(value="저장 파일: 파일을 고르면 예상 이름을 보여 드립니다.")
+        self.output_hint = tk.StringVar()
         ttk.Label(action_area, textvariable=self.output_hint, style="Footer.TLabel").grid(row=0, column=0, sticky="w")
 
         # Process Button
-        self.btn_process = ttk.Button(action_area, text="정리하고 저장하기", command=self.process_csv, style="Primary.TButton")
+        self.btn_process = ttk.Button(action_area, command=self.process_csv, style="Primary.TButton")
         self.btn_process.grid(row=0, column=1, sticky="e")
 
         # Progress bar (advances during processing)
         self.progress = ttk.Progressbar(main, mode="determinate", maximum=100, style="App.Horizontal.TProgressbar")
         self.progress.grid(row=4, column=0, sticky="ew", pady=(14, 0))
 
-        result_section = ttk.LabelFrame(
+        self.result_section = ttk.LabelFrame(
             main,
-            text="처리 결과 · 무엇이 정리되었나요?",
             style="Card.TLabelframe",
             padding=(12, 10),
         )
-        result_section.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
-        result_section.columnconfigure(0, weight=1)
-        result_section.rowconfigure(0, weight=1)
+        self.result_section.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
+        self.result_section.columnconfigure(0, weight=1)
+        self.result_section.rowconfigure(0, weight=1)
         self.result_text = tk.Text(
-            result_section,
+            self.result_section,
             height=8,
             wrap="word",
             relief="flat",
@@ -259,18 +457,16 @@ class CSVModifierApp:
         self.result_text.grid(row=0, column=0, sticky="nsew")
 
         # Status bar
-        self.log_text = tk.StringVar(value="준비됨 · 파일을 고르고 숫자 표기 방식을 선택하세요.")
+        self.log_text = tk.StringVar()
         status_bar = ttk.Frame(root, style="Status.TFrame", padding=(24, 9))
         status_bar.grid(row=1, column=0, sticky="ew")
         ttk.Label(status_bar, textvariable=self.log_text, style="Status.TLabel").grid(row=0, column=0, sticky="w")
 
-        self._update_number_format_help()
-        self._update_output_hint()
-        self._set_result_text("아직 처리한 파일이 없습니다. 파일을 고르고 ‘정리하고 저장하기’를 누르세요.")
+        self._apply_language()
 
     def browse_file(self):
         filename = filedialog.askopenfilename(
-            title="CSV, TXT 또는 Excel 파일 선택",
+            title=self._ui("dialog_title"),
             filetypes=(
                 ("CSV/TXT/Excel files", "*.csv *.txt *.xlsx *.xlsm"),
                 ("All files", "*.*"),
@@ -283,22 +479,64 @@ class CSVModifierApp:
             self.update_max_columns()
             self._update_output_hint()
 
+    def _language_code(self):
+        language = getattr(self, 'language', None)
+        selection = language.get() if language is not None else "한국어"
+        return _LANGUAGE_CODES.get(selection, "ko")
+
+    def _ui(self, key):
+        return _UI_TEXT[self._language_code()][key]
+
+    def _apply_language(self, event=None):
+        """Refresh all user-facing labels while keeping the chosen data settings."""
+        number_mode = self._number_mode(self.num_format.get())
+        output_fmt = self._output_format(self.out_format.get())
+        text = _UI_TEXT[self._language_code()]
+
+        self.header_subtitle.configure(text=text['header_subtitle'])
+        self.language_label.configure(text=text['language_label'])
+        self.file_section.configure(text=text['section_file'])
+        self.browse_button.configure(text=text['browse'])
+        self.file_info_label.configure(text=text['file_info'])
+        self.import_section.configure(text=text['section_import'])
+        self.output_section.configure(text=text['section_output'])
+        self.delimiter_label.configure(text=text['delimiter_label'])
+        self.delimiter_help_label.configure(text=text['delimiter_help'])
+        self.number_format_label.configure(text=text['number_label'])
+        self.columns_label.configure(text=text['columns_label'])
+        self.columns_help_label.configure(text=text['columns_help'])
+        self.output_format_label.configure(text=text['output_label'])
+        self.btn_process.configure(text=text['process'])
+        self.result_section.configure(text=text['result_title'])
+
+        self.combo_format.configure(values=text['number_options'])
+        self.num_format.set(text['number_options'][1 if number_mode == 'Polish' else 0])
+        self.combo_out_format.configure(values=text['output_options'])
+        self.out_format.set(text['output_options'][1 if output_fmt == 'Excel (.xlsx)' else 0])
+
+        self._update_number_format_help()
+        self._update_output_hint()
+        self.log_text.set(text['ready'])
+        if self._last_result is None:
+            self._set_result_text(text['initial_result'])
+        else:
+            self._set_result_text(self._format_result_summary(self._last_result))
+
     @staticmethod
     def _number_mode(selection):
         """Map friendly combobox text to the parser's stable internal mode."""
-        return 'Polish' if str(selection).startswith('Polish') else 'English'
+        value = str(selection).casefold()
+        return 'Polish' if ('polish' in value or 'polski' in value or '폴란드' in value) else 'English'
 
     @staticmethod
     def _output_format(selection):
         """Map friendly combobox text to the stable output format identifier."""
-        return 'Excel (.xlsx)' if str(selection).startswith('Excel') else 'CSV'
+        value = str(selection).casefold()
+        return 'Excel (.xlsx)' if ('excel' in value or 'skoroszyt' in value or '통합' in value) else 'CSV'
 
     def _update_number_format_help(self, event=None):
-        if self._number_mode(self.num_format.get()) == 'Polish':
-            message = "Polish: 1 234,56 · 공백/점은 천 단위, 쉼표는 소수점입니다."
-        else:
-            message = "English: 1,234.56 · 쉼표는 천 단위, 점은 소수점입니다."
-        self.number_format_help.set(message)
+        key = 'number_help_polish' if self._number_mode(self.num_format.get()) == 'Polish' else 'number_help_english'
+        self.number_format_help.set(self._ui(key))
 
     @staticmethod
     def _output_extension(output_fmt):
@@ -322,15 +560,28 @@ class CSVModifierApp:
         output_fmt = self._output_format(self.out_format.get())
         extension = self._output_extension(output_fmt)
         expected_name = f"processed_output_YYYYMMDD_HHMM{extension}"
-        self.output_format_help.set(
-            "CSV는 텍스트 파일입니다. Excel은 바로 열어 계산할 수 있습니다."
-            if output_fmt == 'CSV'
-            else "Excel 파일로 저장합니다. 큰 숫자는 정확도를 위해 텍스트로 보존될 수 있습니다."
-        )
+        self.output_format_help.set(self._ui('output_help_csv' if output_fmt == 'CSV' else 'output_help_excel'))
         if self.filepath.get():
-            self.output_hint.set(f"저장 위치: 원본과 같은 폴더 · 이름: {expected_name}")
+            self.output_hint.set(self._ui('output_hint_with_file').format(name=expected_name))
         else:
-            self.output_hint.set(f"저장 파일 이름: {expected_name}")
+            self.output_hint.set(self._ui('output_hint').format(name=expected_name))
+
+    def _format_result_summary(self, result):
+        """Render the same processing result in the language currently selected."""
+        text = _UI_TEXT[self._language_code()]
+        return '\n'.join((
+            text['summary_saved'].format(name=os.path.basename(result['out_path'])),
+            text['summary_location'].format(path=os.path.dirname(result['out_path'])),
+            '',
+            text['summary_title'],
+            text['summary_rows'].format(rows=result['rows'], columns=result['columns']),
+            text['summary_garbage'].format(count=result['garbage_skipped']),
+            text['summary_values'].format(numbers=result['numbers'], dates=result['dates']),
+            text['summary_flattened'].format(count=result['flattened']),
+            text['summary_repaired'].format(count=result['repaired']),
+            text['summary_large'].format(count=result['large_numbers_as_text']),
+            text['summary_encoding'].format(encoding=result['encoding']),
+        ))
 
     def _set_result_text(self, message):
         """Show the processing explanation inside the app instead of a success popup."""
@@ -552,9 +803,9 @@ class CSVModifierApp:
             max_cols = max((len(r) for r in rows), default=0)
             
             self.max_cols.set(str(max_cols))
-            self.log_text.set(f"Detected Max Columns: {max_cols} (Encoding: {enc})")
+            self.log_text.set(self._ui('detected_columns').format(columns=max_cols, encoding=enc))
         except Exception as e:
-            self.log_text.set("Error detecting columns (Encoding/Delimiter issue)")
+            self.log_text.set(self._ui('detect_columns_error'))
 
     @staticmethod
     def parse_number(val, mode):
@@ -772,30 +1023,30 @@ class CSVModifierApp:
         output_fmt = self._output_format(self.out_format.get())
 
         if not file_path or not os.path.exists(file_path):
-            messagebox.showerror("파일을 선택해 주세요", "정리할 CSV, TXT 또는 Excel 파일을 선택해 주세요.")
+            messagebox.showerror(self._ui('select_file_title'), self._ui('select_file_message'))
             return
 
         is_excel = self._is_excel(file_path)
         if not is_excel and (not delim or len(delim) != 1):
-            messagebox.showerror("구분 기호 확인", "구분 기호는 한 글자여야 합니다. 탭은 \\t로 입력하세요.")
+            messagebox.showerror(self._ui('delimiter_title'), self._ui('delimiter_message'))
             return
 
         try:
             max_c = int(self.max_cols.get())
         except ValueError:
-            messagebox.showerror("열 개수 확인", "표의 열 개수에는 숫자를 입력해 주세요.")
+            messagebox.showerror(self._ui('columns_title'), self._ui('columns_number'))
             return
 
         if max_c <= 0:
-            messagebox.showerror("열 개수 확인", "표의 열 개수는 1 이상이어야 합니다.")
+            messagebox.showerror(self._ui('columns_title'), self._ui('columns_positive'))
             return
 
-        self._set_progress(0, "파일을 읽는 중...")
+        self._set_progress(0, self._ui('reading'))
         self.root.update()
 
         try:
             rows, enc = self.read_file_lines(file_path, delim)
-            self._set_progress(10, f"{len(rows):,}개 행을 읽었습니다. 표 구조를 확인하는 중...")
+            self._set_progress(10, self._ui('scanning').format(rows=f"{len(rows):,}"))
 
             # Find the start index (first row that has max_cols) to skip garbage
             start_idx = 0
@@ -824,8 +1075,8 @@ class CSVModifierApp:
                 padded_rows.append(r)
 
             if not padded_rows:
-                messagebox.showwarning("처리할 표를 찾지 못했습니다", "선택한 열 개수와 맞는 행이 없습니다.")
-                self.log_text.set("처리할 표를 찾지 못했습니다.")
+                messagebox.showwarning(self._ui('no_table_title'), self._ui('no_table_message'))
+                self.log_text.set(self._ui('no_table_title'))
                 return
 
             # Promote the first matching row to the header, remaining rows are data
@@ -833,8 +1084,8 @@ class CSVModifierApp:
             body_rows = padded_rows[1:]
 
             if not body_rows:
-                messagebox.showwarning("데이터가 없습니다", "열 이름은 찾았지만 정리할 데이터 행이 없습니다.")
-                self.log_text.set("열 이름 다음에 데이터가 없습니다.")
+                messagebox.showwarning(self._ui('no_data_title'), self._ui('no_data_message'))
+                self.log_text.set(self._ui('no_data_title'))
                 return
 
             # Build unique, non-empty column names from the header
@@ -883,13 +1134,13 @@ class CSVModifierApp:
 
                 df[col] = df[col].map(convert)
                 self._set_progress(10 + int(70 * (ci + 1) / ncols),
-                                   f"숫자와 날짜를 정리하는 중... ({ci + 1}/{ncols}개 열)")
+                                   self._ui('converting').format(current=ci + 1, total=ncols))
 
             # Replace NaNs with empty strings
             df = df.fillna('')
 
             # Export
-            self._set_progress(85, "새 파일을 저장하는 중...")
+            self._set_progress(85, self._ui('saving'))
             out_path = self._build_output_path(file_path, output_fmt)
             if output_fmt == "Excel (.xlsx)":
                 stats['large_numbers_as_text'] = self._write_excel_output(df, out_path)
@@ -903,28 +1154,27 @@ class CSVModifierApp:
 
                 out_df.to_csv(out_path, sep=sep, index=False, encoding='utf-8-sig')
 
-            self._set_progress(100, "완료되었습니다.")
-
-            summary = (
-                f"저장 완료 · {os.path.basename(out_path)}\n"
-                f"저장 위치: {os.path.dirname(out_path)}\n\n"
-                "이번에 정리한 내용\n"
-                f"• 데이터 행 {len(body_rows):,}개와 열 {ncols}개를 새 파일로 저장했습니다.\n"
-                f"• 위쪽의 표가 아닌 행 {garbage_skipped:,}개를 건너뛰고, 첫 번째 정상 행을 열 이름으로 사용했습니다.\n"
-                f"• 숫자 표기 {stats['numbers']:,}개와 날짜 {stats['dates']:,}개를 읽기 쉬운 값으로 정리했습니다.\n"
-                f"• 셀 안의 줄바꿈 {stats['flattened']:,}개를 한 줄 텍스트로 바꿨습니다.\n"
-                f"• 여러 줄로 끊어진 행 {rows_repaired:,}개를 다시 이었습니다.\n"
-                f"• Excel 정확도 보호를 위해 큰 숫자 {stats['large_numbers_as_text']:,}개를 텍스트로 보존했습니다.\n"
-                f"• 읽은 파일 인코딩: {enc}"
-            )
+            self._set_progress(100, self._ui('done'))
+            self._last_result = {
+                'out_path': out_path,
+                'rows': f"{len(body_rows):,}",
+                'columns': f"{ncols:,}",
+                'garbage_skipped': f"{garbage_skipped:,}",
+                'numbers': f"{stats['numbers']:,}",
+                'dates': f"{stats['dates']:,}",
+                'flattened': f"{stats['flattened']:,}",
+                'repaired': f"{rows_repaired:,}",
+                'large_numbers_as_text': f"{stats['large_numbers_as_text']:,}",
+                'encoding': enc,
+            }
             self.log_text.set(
-                f"완료 · {len(body_rows):,}개 행 저장 → {os.path.basename(out_path)}"
+                self._ui('status_done').format(rows=f"{len(body_rows):,}", name=os.path.basename(out_path))
             )
-            self._set_result_text(summary)
+            self._set_result_text(self._format_result_summary(self._last_result))
 
         except Exception as e:
-            messagebox.showerror("처리 중 오류", f"파일을 정리하지 못했습니다.\n\n{str(e)}")
-            self.log_text.set("처리 중 오류가 발생했습니다.")
+            messagebox.showerror(self._ui('error_title'), self._ui('error_message').format(error=str(e)))
+            self.log_text.set(self._ui('error_title'))
         finally:
             self._set_progress(0)
 

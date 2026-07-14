@@ -9,7 +9,7 @@ from unittest.mock import patch
 import openpyxl
 import pandas as pd
 
-from csv_modifier import CSVModifierApp, ParsedNumber
+from csv_modifier import CSVModifierApp, ParsedNumber, _LANGUAGE_CODES
 
 
 class _Value:
@@ -32,6 +32,31 @@ class _Root:
 
 
 class TestOutput(unittest.TestCase):
+    def test_language_order_defaults_to_english_then_korean_then_polish(self):
+        self.assertEqual(tuple(_LANGUAGE_CODES), ('English', '한국어', 'Polski'))
+
+    def test_localized_format_choices_and_result_summary(self):
+        self.assertEqual(CSVModifierApp._number_mode('폴란드식 · 1 234,56'), 'Polish')
+        self.assertEqual(CSVModifierApp._number_mode('Format polski · 1 234,56'), 'Polish')
+        self.assertEqual(CSVModifierApp._output_format('Skoroszyt Excel (.xlsx)'), 'Excel (.xlsx)')
+
+        app = CSVModifierApp.__new__(CSVModifierApp)
+        app.language = _Value('Polski')
+        summary = app._format_result_summary({
+            'out_path': 'C:/temp/processed_output_20300102_0304.csv',
+            'rows': '3',
+            'columns': '5',
+            'garbage_skipped': '2',
+            'numbers': '3',
+            'dates': '3',
+            'flattened': '2',
+            'repaired': '0',
+            'large_numbers_as_text': '0',
+            'encoding': 'utf-8-sig',
+        })
+        self.assertIn('Co zostało uporządkowane', summary)
+        self.assertIn('Zapisano', summary)
+
     def test_output_name_includes_timestamp_and_avoids_same_minute_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'input.csv'

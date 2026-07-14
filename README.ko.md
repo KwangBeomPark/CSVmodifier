@@ -26,9 +26,9 @@ CSV Modifier는 코딩을 모르는 사용자도 손쉽게 사용할 수 있는 
 ## 다운로드 및 실행 방법
 아래 링크에서 단일 실행 파일(`.exe`)을 다운로드하여 바로 사용할 수 있습니다. 파이썬이나 별도 라이브러리를 설치할 필요가 없습니다.
 
-👉 **[최신 버전 다운로드 (v1.5.0)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.5.0)**
+👉 **[최신 버전 다운로드 (v1.5.1)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.5.1)**
 
-1. 링크에 접속하여 `App04_csv_modifier_v1.5.0.exe` 파일을 다운로드합니다.
+1. 링크에 접속하여 `App04_csv_modifier_v1.5.1.exe` 파일을 다운로드합니다.
 2. 실행 파일을 더블클릭하여 엽니다.
 3. 변환할 파일을 선택하고 화면의 예시를 보고 숫자 표기 방식을 고른 뒤 **[정리하고 저장하기]** 버튼을 누릅니다.
 4. 원본 파일이 위치한 폴더에 `processed_output_YYYYMMDD_HHMM.csv` (또는 `.xlsx`)가 생성됩니다.
