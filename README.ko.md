@@ -26,7 +26,7 @@ CSV Modifier는 코딩을 모르는 사용자도 손쉽게 사용할 수 있는 
 
 👉 **[최신 버전 다운로드 (v1.4.0)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.4.0)**
 
-1. 링크에 접속하여 `csv_modifier.exe` 파일을 다운로드합니다.
+1. 링크에 접속하여 `App04_cvs_modifier_v1.4.0.exe` 파일을 다운로드합니다.
 2. 실행 파일을 더블클릭하여 엽니다.
 3. 변환할 파일을 선택하고 구분자, 숫자 형식, 출력 포맷을 지정한 뒤 **[Process & Save]** 버튼을 누릅니다.
 4. 원본 파일이 위치한 폴더에 `processed_output.csv` (또는 `.xlsx`)가 생성됩니다.

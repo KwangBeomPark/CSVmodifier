@@ -26,7 +26,7 @@ You can download the standalone executable file (`.exe`) from the link below and
 
 👉 **[Download Latest Version (v1.4.0)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.4.0)**
 
-1. Go to the link and download the `csv_modifier.exe` file.
+1. Go to the link and download the `App04_cvs_modifier_v1.4.0.exe` file.
 2. Double-click the executable to open it.
 3. Select the file to convert, specify the delimiter, number format, and output format, then click the **[Process & Save]** button.
 4. The `processed_output.csv` (or `.xlsx`) will be created in the same folder as the original file.
