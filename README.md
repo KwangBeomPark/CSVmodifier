@@ -1,28 +1,32 @@
+*Read this in other languages: [English](README.md), [한국어](README.ko.md)*
+
 # CSV Modifier
 
-CSV Modifier는 코딩을 모르는 사용자도 손쉽게 사용할 수 있는 직관적인 형태의 CSV / TXT 변환 및 정제 프로그램입니다.
-특히 다음과 같은 문제들을 해결하기 위해 제작되었습니다:
+CSV Modifier is an intuitive, easy-to-use CSV / TXT / Excel conversion and cleaning program designed for users without any coding experience.
+It is specifically built to solve the following common issues:
 
-## 주요 기능
-- **안전한 데이터 파싱**: 텍스트(문자열) 내부에 존재하는 엔터(줄바꿈) 문자가 포함되어 있어도 엑셀이나 파워쿼리처럼 하나의 셀로 인식하여 오류 없이 읽어오며, 출력 시에는 셀 내부 줄바꿈을 공백으로 정리하여 한 레코드가 한 줄로 저장됩니다.
-- **영어 및 폴란드어 숫자 변환**: 
-  - 폴란드어 방식 숫자 표기(`1 234,56` 또는 `1.234,56`)를 깔끔하게 실수로 변환합니다.
-  - 영어 방식 표기(`1,234.56`) 역시 선택하여 처리할 수 있습니다.
-- **가변적인 컬럼 자동 인식 및 쓰레기 데이터 제거**: 파일 상위 행을 분석하여 최대 컬럼 수를 추론합니다. 컬럼이 부족한 상단 쓰레기 행(Garbage Header)은 무시하고, 첫 유효 행을 **실제 헤더(컬럼명)로 승격**한 뒤 데이터만 추출합니다.
-- **날짜/숫자 자동 타입 변환**: 날짜 형식(`2026-07-14`, `14.07.2026` 등)은 날짜로, 숫자는 정수/실수로 변환하며, 변환에 실패하면 원본 텍스트를 그대로 유지합니다. 원본의 소수 자릿수(예: `500,00`)도 보존합니다.
-- **출력 포맷 선택**: 
-  - 기본 CSV 포맷 (폴란드어 설정 시 세미콜론 `;` 구분자 적용)
-  - 엑셀 파일(`.xlsx`)로 바로 출력 가능
-- **인코딩 자동 감지**: UTF-8을 우선 확인하고, 레거시 인코딩(`cp949`, `cp1252`)은 깨진 문자가 가장 적은 쪽을 선택하여 한국어 엑셀 파일도 글자 깨짐 없이 처리합니다.
-- **대용량 파일 고속 처리**: 날짜/숫자 판별을 최적화하여 10만 행 이상도 수 초 내에 변환합니다.
-- **진행률 표시 및 결과 요약**: 처리 중 진행률 바와 단계를 보여주고, 완료 후 변환된 숫자/날짜 셀 수, 컬럼 수, 인코딩 등 요약을 제공합니다.
+## Key Features
+- **Safe Data Parsing**: Even if text (strings) contain line breaks (Enter), it reads them as a single cell without errors, just like Excel or Power Query. When exporting, internal cell line breaks (including special characters like vertical tab `\x0b`, U+2028, etc.) are replaced with spaces so that one record is stored in exactly one line.
+- **Broken Multi-line Record Recovery**: For files where line breaks occur inside a cell without quotes causing a single record to split across multiple lines (a common defect in Excel exports), the program automatically pieces the fragments back together. The number of recovered rows is displayed in the result summary.
+- **Direct Excel File Input**: Reads `.xlsx` / `.xlsm` files directly without converting them to CSV first. Cell values are imported with their original types, inherently preventing encoding or quoting issues.
+- **English and Polish Number Format Conversion**: 
+  - Cleanly converts Polish number formats (e.g., `1 234,56` or `1.234,56`) to valid floating-point numbers.
+  - English number formats (e.g., `1,234.56`) are also supported and can be selected.
+- **Automatic Variable Column Detection & Garbage Data Removal**: Analyzes the top rows of the file to infer the maximum number of columns. It ignores top garbage rows (Garbage Header) that lack enough columns, promotes the first valid row to the **actual header**, and extracts only the data.
+- **Automatic Date/Number Type Conversion**: Converts date formats (e.g., `2026-07-14`, `14.07.2026`) to dates, and numbers to integers/floats. If conversion fails, it retains the original text. It also preserves the original decimal places (e.g., `500,00`).
+- **Output Format Selection**: 
+  - Standard CSV format (uses semicolon `;` delimiter when Polish format is selected).
+  - Direct export to Excel file (`.xlsx`).
+- **Automatic Encoding Detection**: Prioritizes UTF-8 detection and automatically detects UTF-16 (with or without BOM), which is Excel's "Unicode Text" format. For legacy encodings (`cp949`, `cp1252`), it selects the one with the fewest broken characters, ensuring Korean Excel files are processed without text corruption. For tab-separated files, simply enter `\t` as the delimiter.
+- **High-Speed Processing for Large Files**: Optimizes date/number detection to process over 100,000 rows in seconds.
+- **Progress Display and Result Summary**: Shows a progress bar and steps during processing. Provides a summary of converted number/date cells, column count, and encoding upon completion.
 
-## 다운로드 및 실행 방법
-아래 링크에서 단일 실행 파일(`.exe`)을 다운로드하여 바로 사용할 수 있습니다. 파이썬이나 별도 라이브러리를 설치할 필요가 없습니다.
+## Download & How to Run
+You can download the standalone executable file (`.exe`) from the link below and use it immediately. No need to install Python or any additional libraries.
 
-👉 **[최신 버전 다운로드 (v1.2.1)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.2.1)**
+👉 **[Download Latest Version (v1.4.0)](https://github.com/KwangBeomPark/CSVmodifier/releases/tag/v1.4.0)**
 
-1. 링크에 접속하여 `csv_modifier.exe` 파일을 다운로드합니다.
-2. 실행 파일을 더블클릭하여 엽니다.
-3. 변환할 파일을 선택하고 구분자, 숫자 형식, 출력 포맷을 지정한 뒤 **[Process & Save]** 버튼을 누릅니다.
-4. 원본 파일이 위치한 폴더에 `processed_output.csv` (또는 `.xlsx`)가 생성됩니다.
+1. Go to the link and download the `csv_modifier.exe` file.
+2. Double-click the executable to open it.
+3. Select the file to convert, specify the delimiter, number format, and output format, then click the **[Process & Save]** button.
+4. The `processed_output.csv` (or `.xlsx`) will be created in the same folder as the original file.

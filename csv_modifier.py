@@ -6,12 +6,16 @@ import os
 import re
 from datetime import datetime
 
-__version__ = "1.2.1"
+__version__ = "1.4.0"
 
 # Pre-compiled patterns (compiling once matters a lot on large files).
 # _DATE_HINT_RE cheaply rejects non-date cells so we skip the expensive
 # strptime attempts on the vast majority of values.
 _DATE_HINT_RE = re.compile(r'\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}')
+# Every character Excel/Windows can smuggle into a cell as a line break:
+# CR/LF plus vertical tab (Alt+Enter survives copy-paste as \x0b), form feed,
+# NEL, and the Unicode line/paragraph separators.
+_LINEBREAK_RE = re.compile('[\r\n\x0b\x0c\x85\u2028\u2029]+')
 _EN_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?')
 _PL_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?')
 
@@ -94,7 +98,7 @@ class CSVModifierApp:
         self.lbl_file = ttk.Entry(file_section, textvariable=self.filepath, state="readonly")
         self.lbl_file.grid(row=0, column=0, sticky="ew")
         ttk.Button(file_section, text="Browse...", command=self.browse_file, style="Secondary.TButton").grid(row=0, column=1, padx=(10, 0))
-        ttk.Label(file_section, text="CSV and TXT files are supported.", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(file_section, text="CSV, TXT, and Excel (.xlsx) files are supported.", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         settings = ttk.Frame(main, style="App.TFrame")
         settings.grid(row=2, column=0, sticky="nsew")
@@ -155,12 +159,25 @@ class CSVModifierApp:
 
     def browse_file(self):
         filename = filedialog.askopenfilename(
-            title="Select CSV/TXT File",
-            filetypes=(("CSV/TXT files", "*.csv *.txt"), ("All files", "*.*"))
+            title="Select CSV/TXT/Excel File",
+            filetypes=(
+                ("CSV/TXT/Excel files", "*.csv *.txt *.xlsx *.xlsm"),
+                ("All files", "*.*"),
+            )
         )
         if filename:
             self.filepath.set(filename)
             self.update_max_columns()
+
+    @staticmethod
+    def _is_excel(file_path):
+        return os.path.splitext(file_path)[1].lower() in ('.xlsx', '.xlsm', '.xls')
+
+    @staticmethod
+    def _normalize_delim(delim):
+        # Let the user type "\t" or "tab" for tab-separated files
+        # (Excel's "Unicode Text" export is tab-separated).
+        return {'\\t': '\t', 'tab': '\t', 'TAB': '\t', 'Tab': '\t'}.get(delim, delim)
 
     def _detect_encoding(self, file_path):
         """Pick the most plausible text encoding.
@@ -173,6 +190,20 @@ class CSVModifierApp:
         """
         with open(file_path, 'rb') as f:
             raw = f.read()
+
+        # Excel's "Unicode Text" / "CSV UTF-16" exports are UTF-16. The BOM is
+        # authoritative, and it must be checked before UTF-8: ASCII-only
+        # UTF-16 also decodes "successfully" as UTF-8 (with NULs between
+        # every character), which then crashes csv with "line contains NUL".
+        if raw.startswith(b'\xff\xfe') or raw.startswith(b'\xfe\xff'):
+            return 'utf-16'
+        if raw and raw.count(b'\x00') > len(raw) // 4:
+            for enc in ('utf-16-le', 'utf-16-be'):
+                try:
+                    raw.decode(enc)
+                    return enc
+                except UnicodeDecodeError:
+                    pass
 
         for enc in ('utf-8-sig', 'utf-8'):
             try:
@@ -196,6 +227,9 @@ class CSVModifierApp:
         return 'latin-1'  # never fails; last-resort so the app degrades gracefully
 
     def read_file_lines(self, file_path, delim, max_lines=None):
+        if self._is_excel(file_path):
+            return self._read_excel_rows(file_path, max_lines), 'Excel'
+        delim = self._normalize_delim(delim)
         if not delim or len(delim) != 1:
             raise ValueError("Delimiter must be a single character.")
         enc = self._detect_encoding(file_path)
@@ -207,6 +241,77 @@ class CSVModifierApp:
                     break
                 rows.append(row)
         return rows, enc
+
+    def _read_excel_rows(self, file_path, max_lines=None):
+        """Read an Excel sheet into rows of native values (no CSV round-trip,
+        so quoting/encoding problems cannot occur). Trailing empty cells are
+        trimmed per row so garbage/header detection works the same as for CSV."""
+        df = pd.read_excel(file_path, header=None, dtype=object, nrows=max_lines)
+        rows = []
+        for rec in df.itertuples(index=False, name=None):
+            row = []
+            for v in rec:
+                if v is None or (not isinstance(v, str) and pd.isna(v)):
+                    row.append('')
+                elif isinstance(v, datetime):
+                    row.append(v.date() if (v.hour, v.minute, v.second) == (0, 0, 0) else v)
+                else:
+                    row.append(v)
+            while row and row[-1] == '':
+                row.pop()
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _repair_split_rows(rows, max_c):
+        """Rejoin records that unquoted in-cell line breaks split across
+        physical lines (a frequent defect in Excel-exported or hand-edited
+        CSVs). A short row is merged with the following row(s) only when the
+        pieces reassemble to exactly max_c columns; genuinely short rows are
+        left untouched and padded later as before."""
+        out = []
+        repaired = 0
+        i = 0
+        n = len(rows)
+        while i < n:
+            row = rows[i]
+            if not 0 < len(row) < max_c:
+                out.append(row)
+                i += 1
+                continue
+            # Case 1: a break inside the LAST field leaves the record itself
+            # complete and spills the remainder onto its own one-cell line —
+            # glue that remainder onto the previous row's last cell. This must
+            # be checked first: forward-merging such an orphan would swallow
+            # the next real record instead.
+            if len(row) == 1 and out and len(out[-1]) == max_c:
+                out[-1][-1] = f"{out[-1][-1]} {row[0]}".strip()
+                repaired += 1
+                i += 1
+                continue
+            # Case 2: a break inside a MIDDLE field leaves every fragment
+            # short. Rebuild the record from consecutive short fragments,
+            # joining the two halves of the broken cell with a space. Never
+            # consume a complete row, and commit only if the pieces
+            # reassemble to exactly max_c columns.
+            merged = list(row)
+            j = i + 1
+            while j < n and len(merged) < max_c and j - i <= 20:
+                nxt = rows[j]
+                if len(nxt) >= max_c or len(merged) + max(len(nxt), 1) - 1 > max_c:
+                    break
+                if nxt:
+                    merged[-1] = f"{merged[-1]} {nxt[0]}".strip()
+                    merged.extend(nxt[1:])
+                j += 1
+            if len(merged) == max_c and j > i + 1:
+                out.append(merged)
+                repaired += 1
+                i = j
+                continue
+            out.append(row)
+            i += 1
+        return out, repaired
 
     def update_max_columns(self, event=None):
         file_path = self.filepath.get()
@@ -289,16 +394,17 @@ class CSVModifierApp:
 
     def process_csv(self):
         file_path = self.filepath.get()
-        delim = self.delimiter.get()
+        delim = self._normalize_delim(self.delimiter.get())
         mode = self.num_format.get()
         output_fmt = self.out_format.get()
-        
+
         if not file_path or not os.path.exists(file_path):
             messagebox.showerror("Error", "Please select a valid file.")
             return
 
-        if not delim or len(delim) != 1:
-            messagebox.showerror("Error", "Delimiter must be a single character.")
+        is_excel = self._is_excel(file_path)
+        if not is_excel and (not delim or len(delim) != 1):
+            messagebox.showerror("Error", "Delimiter must be a single character (use \\t for tab).")
             return
 
         try:
@@ -328,6 +434,12 @@ class CSVModifierApp:
             garbage_skipped = start_idx
             data_rows = rows[start_idx:]
 
+            # Rejoin records that unquoted in-cell line breaks split across
+            # physical lines (Excel input needs no repair: cells arrive intact).
+            rows_repaired = 0
+            if not is_excel:
+                data_rows, rows_repaired = self._repair_split_rows(data_rows, max_c)
+
             # Pad or truncate short/long rows to exactly max_c columns
             padded_rows = []
             for r in data_rows:
@@ -356,7 +468,8 @@ class CSVModifierApp:
             col_names = []
             seen = {}
             for i, name in enumerate(header_row):
-                name = (name or '').replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ').strip()
+                name = '' if name is None else str(name)
+                name = _LINEBREAK_RE.sub(' ', name).strip()
                 name = name or f"Column{i+1}"
                 if name in seen:
                     seen[name] += 1
@@ -380,10 +493,13 @@ class CSVModifierApp:
                 col_state = {'max_dec': 0}
 
                 def convert(x, cs=col_state):
-                    # Flatten in-cell line breaks so a quoted multi-line field
-                    # becomes a single physical line in the output (one row = one line).
-                    if '\n' in x or '\r' in x:
-                        x = x.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
+                    if not isinstance(x, str):
+                        return x  # Excel input arrives already typed (dates, numbers)
+                    # Flatten in-cell line breaks — including the exotic ones Excel
+                    # produces (\x0b from Alt+Enter copy-paste, U+2028/U+2029) — so a
+                    # multi-line field becomes a single physical line in the output.
+                    if _LINEBREAK_RE.search(x):
+                        x = _LINEBREAK_RE.sub(' ', x)
                         stats['flattened'] += 1
                     d = self.parse_date(x)
                     if not isinstance(d, str):
@@ -430,7 +546,13 @@ class CSVModifierApp:
                         if isinstance(x, float):
                             if pd.isna(x):
                                 return ''
-                            return f"{x:.{width}f}".replace('.', dec_sep) if dec_sep != '.' else f"{x:.{width}f}"
+                            s = f"{x:.{width}f}"
+                            # width comes from decimals seen while parsing strings;
+                            # Excel-native floats never went through that, so fall
+                            # back to full precision rather than silently rounding.
+                            if float(s) != x:
+                                s = repr(float(x))
+                            return s.replace('.', dec_sep) if dec_sep != '.' else s
                         return x
 
                     out_df[col] = out_df[col].map(fmt)
@@ -448,6 +570,7 @@ class CSVModifierApp:
                 f"• Numbers converted: {stats['numbers']:,} cells\n"
                 f"• Dates converted: {stats['dates']:,} cells\n"
                 f"• Multi-line cells flattened: {stats['flattened']:,}\n"
+                f"• Split rows rejoined: {rows_repaired:,}\n"
                 f"• Encoding: {enc}\n\n"
                 f"Saved to:\n{out_path}"
             )
