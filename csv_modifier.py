@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 # Pre-compiled patterns (compiling once matters a lot on large files).
 # _DATE_HINT_RE cheaply rejects non-date cells so we skip the expensive
@@ -356,7 +356,8 @@ class CSVModifierApp:
             col_names = []
             seen = {}
             for i, name in enumerate(header_row):
-                name = (name or '').strip() or f"Column{i+1}"
+                name = (name or '').replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ').strip()
+                name = name or f"Column{i+1}"
                 if name in seen:
                     seen[name] += 1
                     name = f"{name}_{seen[name]}"
@@ -371,7 +372,7 @@ class CSVModifierApp:
             # that also tallies what changed and records each column's original
             # decimal precision (used to keep values like "500,00" intact on export).
             dec_sep = ',' if mode == 'Polish' else '.'
-            stats = {'numbers': 0, 'dates': 0}
+            stats = {'numbers': 0, 'dates': 0, 'flattened': 0}
             col_decimals = [0] * len(col_names)
             ncols = len(df.columns)
 
@@ -379,6 +380,11 @@ class CSVModifierApp:
                 col_state = {'max_dec': 0}
 
                 def convert(x, cs=col_state):
+                    # Flatten in-cell line breaks so a quoted multi-line field
+                    # becomes a single physical line in the output (one row = one line).
+                    if '\n' in x or '\r' in x:
+                        x = x.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
+                        stats['flattened'] += 1
                     d = self.parse_date(x)
                     if not isinstance(d, str):
                         stats['dates'] += 1
@@ -441,6 +447,7 @@ class CSVModifierApp:
                 f"• Garbage rows skipped: {garbage_skipped}\n"
                 f"• Numbers converted: {stats['numbers']:,} cells\n"
                 f"• Dates converted: {stats['dates']:,} cells\n"
+                f"• Multi-line cells flattened: {stats['flattened']:,}\n"
                 f"• Encoding: {enc}\n\n"
                 f"Saved to:\n{out_path}"
             )
