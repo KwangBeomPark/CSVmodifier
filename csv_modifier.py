@@ -6,7 +6,14 @@ import os
 import re
 from datetime import datetime
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
+
+# Pre-compiled patterns (compiling once matters a lot on large files).
+# _DATE_HINT_RE cheaply rejects non-date cells so we skip the expensive
+# strptime attempts on the vast majority of values.
+_DATE_HINT_RE = re.compile(r'\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}')
+_EN_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?')
+_PL_NUM_RE = re.compile(r'-?(?:\d+|\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?')
 
 class CSVModifierApp:
     def __init__(self, root):
@@ -61,6 +68,7 @@ class CSVModifierApp:
         style.map("Secondary.TButton", background=[("active", "#D4E8EE"), ("pressed", "#C4DDE5")])
         style.configure("Status.TFrame", background=navy)
         style.configure("Status.TLabel", background=navy, foreground="#D9E2EC", font=("Segoe UI", 9))
+        style.configure("App.Horizontal.TProgressbar", troughcolor=border, background=accent, bordercolor=border, lightcolor=accent, darkcolor=accent)
 
         main = ttk.Frame(root, style="App.TFrame", padding=(24, 20, 24, 18))
         main.grid(row=0, column=0, sticky="nsew")
@@ -134,6 +142,10 @@ class CSVModifierApp:
         # Process Button
         self.btn_process = ttk.Button(action_area, text="Process & Save", command=self.process_csv, style="Primary.TButton")
         self.btn_process.grid(row=0, column=1, sticky="e")
+
+        # Progress bar (advances during processing)
+        self.progress = ttk.Progressbar(main, mode="determinate", maximum=100, style="App.Horizontal.TProgressbar")
+        self.progress.grid(row=4, column=0, sticky="ew", pady=(14, 0))
 
         # Status bar
         self.log_text = tk.StringVar(value="Ready.")
@@ -220,11 +232,11 @@ class CSVModifierApp:
         if not v:
             return val
         if mode == 'English':
-            if not re.fullmatch(r'-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?', v):
+            if not _EN_NUM_RE.fullmatch(v):
                 return val
             num_str = v.replace(',', '')
         elif mode == 'Polish':
-            if not re.fullmatch(r'-?(?:\d+|\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?', v):
+            if not _PL_NUM_RE.fullmatch(v):
                 return val
             num_str = v.replace(' ', '').replace('.', '').replace(',', '.')
         else:
@@ -242,7 +254,9 @@ class CSVModifierApp:
         if not isinstance(val, str):
             return val
         v = val.strip()
-        if not v:
+        # Skip strptime unless the value even looks like a date. This is the
+        # single biggest speed-up on large files (most cells are not dates).
+        if not v or not _DATE_HINT_RE.fullmatch(v):
             return val
         formats = [
             "%Y-%m-%d", "%Y/%m/%d",
@@ -262,6 +276,16 @@ class CSVModifierApp:
         if not isinstance(d, str):
             return d
         return self.parse_number(val, mode)
+
+    def _set_progress(self, pct, msg=None):
+        """Move the progress bar and (optionally) the status text, then repaint."""
+        try:
+            self.progress['value'] = max(0, min(100, pct))
+            if msg is not None:
+                self.log_text.set(msg)
+            self.root.update_idletasks()
+        except Exception:
+            pass
 
     def process_csv(self):
         file_path = self.filepath.get()
@@ -287,11 +311,12 @@ class CSVModifierApp:
             messagebox.showerror("Error", "Max Columns must be greater than 0.")
             return
 
-        self.log_text.set("Processing...")
+        self._set_progress(0, "Reading file...")
         self.root.update()
 
         try:
             rows, enc = self.read_file_lines(file_path, delim)
+            self._set_progress(10, f"Read {len(rows):,} rows. Scanning...")
 
             # Find the start index (first row that has max_cols) to skip garbage
             start_idx = 0
@@ -299,7 +324,8 @@ class CSVModifierApp:
                 if len(row) == max_c:
                     start_idx = i
                     break
-            
+
+            garbage_skipped = start_idx
             data_rows = rows[start_idx:]
 
             # Pad or truncate short/long rows to exactly max_c columns
@@ -341,14 +367,43 @@ class CSVModifierApp:
             # Create DataFrame from the data rows (header excluded)
             df = pd.DataFrame(body_rows, columns=col_names)
 
-            # Apply type coercion (date -> number -> text)
-            for col in df.columns:
-                df[col] = df[col].apply(lambda x: self.convert_value(x, mode))
+            # Type coercion (date -> number -> text) in a single pass per column
+            # that also tallies what changed and records each column's original
+            # decimal precision (used to keep values like "500,00" intact on export).
+            dec_sep = ',' if mode == 'Polish' else '.'
+            stats = {'numbers': 0, 'dates': 0}
+            col_decimals = [0] * len(col_names)
+            ncols = len(df.columns)
+
+            for ci, col in enumerate(df.columns):
+                col_state = {'max_dec': 0}
+
+                def convert(x, cs=col_state):
+                    d = self.parse_date(x)
+                    if not isinstance(d, str):
+                        stats['dates'] += 1
+                        return d
+                    n = self.parse_number(x, mode)
+                    if not isinstance(n, str):
+                        stats['numbers'] += 1
+                        if type(n) is float:
+                            cell = x.strip()
+                            if dec_sep in cell:
+                                w = len(cell.rsplit(dec_sep, 1)[-1])
+                                if w > cs['max_dec']:
+                                    cs['max_dec'] = w
+                    return n
+
+                df[col] = df[col].map(convert)
+                col_decimals[ci] = col_state['max_dec']
+                self._set_progress(10 + int(70 * (ci + 1) / ncols),
+                                   f"Converting columns... ({ci + 1}/{ncols})")
 
             # Replace NaNs with empty strings
             df = df.fillna('')
 
             # Export
+            self._set_progress(85, "Saving output...")
             if output_fmt == "Excel (.xlsx)":
                 # Excel keeps real numeric/date types so the values stay computable.
                 out_path = os.path.join(os.path.dirname(file_path), 'processed_output.xlsx')
@@ -356,18 +411,9 @@ class CSVModifierApp:
             else:
                 out_path = os.path.join(os.path.dirname(file_path), 'processed_output.csv')
                 sep = ';' if mode == 'Polish' else ','
-                dec_sep = ',' if mode == 'Polish' else '.'
 
                 # Preserve each column's original decimal precision so values like
                 # Polish "500,00" are written back as "500,00" instead of "500,0".
-                col_decimals = [0] * len(col_names)
-                for r in body_rows:
-                    for ci in range(len(col_names)):
-                        cell = r[ci].strip()
-                        if dec_sep in cell and isinstance(self.parse_number(cell, mode), float):
-                            col_decimals[ci] = max(col_decimals[ci],
-                                                   len(cell.rsplit(dec_sep, 1)[-1]))
-
                 out_df = df.copy()
                 for ci, col in enumerate(out_df.columns):
                     width = col_decimals[ci]
@@ -381,16 +427,34 @@ class CSVModifierApp:
                             return f"{x:.{width}f}".replace('.', dec_sep) if dec_sep != '.' else f"{x:.{width}f}"
                         return x
 
-                    out_df[col] = out_df[col].apply(fmt)
+                    out_df[col] = out_df[col].map(fmt)
 
                 out_df.to_csv(out_path, sep=sep, index=False, encoding='utf-8-sig')
 
-            self.log_text.set(f"Saved to: {out_path}")
-            messagebox.showinfo("Success", f"File processed successfully!\nSaved to: {out_path}")
+            self._set_progress(100, "Done.")
+
+            # Concise report of what the run actually changed
+            summary = (
+                "Processing complete!\n\n"
+                f"• Data rows: {len(body_rows):,}\n"
+                f"• Columns: {ncols} (first valid row promoted to header)\n"
+                f"• Garbage rows skipped: {garbage_skipped}\n"
+                f"• Numbers converted: {stats['numbers']:,} cells\n"
+                f"• Dates converted: {stats['dates']:,} cells\n"
+                f"• Encoding: {enc}\n\n"
+                f"Saved to:\n{out_path}"
+            )
+            self.log_text.set(
+                f"Done · {len(body_rows):,} rows · {stats['numbers']:,} numbers · "
+                f"{stats['dates']:,} dates → {os.path.basename(out_path)}"
+            )
+            messagebox.showinfo("Success", summary)
 
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
             self.log_text.set("Error during processing.")
+        finally:
+            self._set_progress(0)
 
 if __name__ == "__main__":
     root = tk.Tk()
