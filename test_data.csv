@@ -1,0 +1,10 @@
+report date: 2026-07-14
+garbage row
+another garbage row
+Id,Name,Balance,Date,Notes
+1,John,"1 234,56",2026-07-14,"First line
+Second line"
+2,Jane,"500,00",2026-07-15,Single line
+3,Bob,"1.000.000,00",2026-07-16,"Another
+multi
+line"
