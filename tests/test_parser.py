@@ -1,9 +1,9 @@
 import unittest
 import decimal
-from csv_modifier import CSVModifierApp, ParsedNumber
+from data_refinery import DataRefineryApp, ParsedNumber
 
 
-class TestCSVModifierParser(unittest.TestCase):
+class TestDataRefineryParser(unittest.TestCase):
     def test_polish_valid_numbers(self):
         cases = [
             ("1234", "1234", 0),
@@ -24,7 +24,7 @@ class TestCSVModifierParser(unittest.TestCase):
 
         for val, expected_dec_str, expected_orig_dec in cases:
             with self.subTest(val=val):
-                res = CSVModifierApp.parse_number(val, 'Polish')
+                res = DataRefineryApp.parse_number(val, 'Polish')
                 self.assertIsInstance(res, ParsedNumber)
                 self.assertEqual(res.value, decimal.Decimal(expected_dec_str))
                 self.assertEqual(res.orig_decimals, expected_orig_dec)
@@ -45,7 +45,7 @@ class TestCSVModifierParser(unittest.TestCase):
 
         for val in cases:
             with self.subTest(val=val):
-                res = CSVModifierApp.parse_number(val, 'Polish')
+                res = DataRefineryApp.parse_number(val, 'Polish')
                 self.assertEqual(res, val) # Should return original string
 
     def test_english_valid_numbers(self):
@@ -62,7 +62,7 @@ class TestCSVModifierParser(unittest.TestCase):
 
         for val, expected_dec_str, expected_orig_dec in cases:
             with self.subTest(val=val):
-                res = CSVModifierApp.parse_number(val, 'English')
+                res = DataRefineryApp.parse_number(val, 'English')
                 self.assertIsInstance(res, ParsedNumber)
                 self.assertEqual(res.value, decimal.Decimal(expected_dec_str))
                 self.assertEqual(res.orig_decimals, expected_orig_dec)
@@ -79,14 +79,14 @@ class TestCSVModifierParser(unittest.TestCase):
 
         for val in cases:
             with self.subTest(val=val):
-                res = CSVModifierApp.parse_number(val, 'English')
+                res = DataRefineryApp.parse_number(val, 'English')
                 self.assertEqual(res, val)
 
     def test_large_integer_is_preserved_as_decimal_for_safe_export_handling(self):
-        result = CSVModifierApp.parse_number("1234567890123456", "Polish")
+        result = DataRefineryApp.parse_number("1234567890123456", "Polish")
         self.assertIsInstance(result, ParsedNumber)
         self.assertEqual(result.value, decimal.Decimal("1234567890123456"))
-        self.assertTrue(CSVModifierApp._requires_excel_text(result))
+        self.assertTrue(DataRefineryApp._requires_excel_text(result))
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,7 +9,7 @@ from unittest.mock import patch
 import openpyxl
 import pandas as pd
 
-from csv_modifier import CSVModifierApp, ParsedNumber, _LANGUAGE_CODES
+from data_refinery import DataRefineryApp, ParsedNumber, _LANGUAGE_CODES
 
 
 class _Value:
@@ -36,11 +36,11 @@ class TestOutput(unittest.TestCase):
         self.assertEqual(tuple(_LANGUAGE_CODES), ('English', '한국어', 'Polski'))
 
     def test_localized_format_choices_and_result_summary(self):
-        self.assertEqual(CSVModifierApp._number_mode('폴란드식 · 1 234,56'), 'Polish')
-        self.assertEqual(CSVModifierApp._number_mode('Format polski · 1 234,56'), 'Polish')
-        self.assertEqual(CSVModifierApp._output_format('Skoroszyt Excel (.xlsx)'), 'Excel (.xlsx)')
+        self.assertEqual(DataRefineryApp._number_mode('폴란드식 · 1 234,56'), 'Polish')
+        self.assertEqual(DataRefineryApp._number_mode('Format polski · 1 234,56'), 'Polish')
+        self.assertEqual(DataRefineryApp._output_format('Skoroszyt Excel (.xlsx)'), 'Excel (.xlsx)')
 
-        app = CSVModifierApp.__new__(CSVModifierApp)
+        app = DataRefineryApp.__new__(DataRefineryApp)
         app.language = _Value('Polski')
         summary = app._format_result_summary({
             'out_path': 'C:/temp/processed_output_20300102_0304.csv',
@@ -62,38 +62,38 @@ class TestOutput(unittest.TestCase):
             source = Path(directory) / 'input.csv'
             source.touch()
             timestamp = datetime(2030, 1, 2, 3, 4)
-            first = Path(CSVModifierApp._build_output_path(source, 'CSV', timestamp))
+            first = Path(DataRefineryApp._build_output_path(source, 'CSV', timestamp))
             self.assertEqual(first.name, 'processed_output_20300102_0304.csv')
             first.touch()
-            second = Path(CSVModifierApp._build_output_path(source, 'CSV', timestamp))
+            second = Path(DataRefineryApp._build_output_path(source, 'CSV', timestamp))
 
         self.assertEqual(second.name, 'processed_output_20300102_0304_02.csv')
 
     def test_csv_formatter_preserves_each_cell_decimal_scale(self):
         values = [
-            CSVModifierApp.parse_number('500,00', 'Polish'),
-            CSVModifierApp.parse_number('1,2', 'Polish'),
-            CSVModifierApp.parse_number('2,345', 'Polish'),
+            DataRefineryApp.parse_number('500,00', 'Polish'),
+            DataRefineryApp.parse_number('1,2', 'Polish'),
+            DataRefineryApp.parse_number('2,345', 'Polish'),
         ]
         self.assertEqual(
-            [CSVModifierApp._format_csv_value(value, ',') for value in values],
+            [DataRefineryApp._format_csv_value(value, ',') for value in values],
             ['500,00', '1,2', '2,345'],
         )
 
     def test_excel_output_preserves_formats_and_text_protects_large_numbers(self):
         values = [
-            CSVModifierApp.parse_number('500,00', 'Polish'),
-            CSVModifierApp.parse_number('1,2', 'Polish'),
-            CSVModifierApp.parse_number('9999999999999999,99', 'Polish'),
-            CSVModifierApp.parse_number('1234567890123456', 'Polish'),
-            CSVModifierApp.parse_number('100000000000000,00', 'Polish'),
+            DataRefineryApp.parse_number('500,00', 'Polish'),
+            DataRefineryApp.parse_number('1,2', 'Polish'),
+            DataRefineryApp.parse_number('9999999999999999,99', 'Polish'),
+            DataRefineryApp.parse_number('1234567890123456', 'Polish'),
+            DataRefineryApp.parse_number('100000000000000,00', 'Polish'),
         ]
         self.assertTrue(all(isinstance(value, ParsedNumber) for value in values))
         frame = pd.DataFrame([values], columns=['two', 'one', 'large_decimal', 'large_integer', 'safe_zeroes'])
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'output.xlsx'
-            protected_count = CSVModifierApp._write_excel_output(frame, path)
+            protected_count = DataRefineryApp._write_excel_output(frame, path)
             workbook = openpyxl.load_workbook(path, data_only=False)
             sheet = workbook.active
 
@@ -114,7 +114,7 @@ class TestOutput(unittest.TestCase):
             source = Path(directory) / 'input.csv'
             shutil.copyfile(repository_root / 'test_data.csv', source)
 
-            app = CSVModifierApp.__new__(CSVModifierApp)
+            app = DataRefineryApp.__new__(DataRefineryApp)
             app.filepath = _Value(str(source))
             app.delimiter = _Value(',')
             app.num_format = _Value('Polish')
@@ -124,9 +124,9 @@ class TestOutput(unittest.TestCase):
             app.root = _Root()
             app._set_progress = lambda *args, **kwargs: None
 
-            with patch('csv_modifier.messagebox.showerror') as show_error, patch(
-                'csv_modifier.messagebox.showwarning'
-            ) as show_warning, patch('csv_modifier.messagebox.showinfo'):
+            with patch('data_refinery.messagebox.showerror') as show_error, patch(
+                'data_refinery.messagebox.showwarning'
+            ) as show_warning, patch('data_refinery.messagebox.showinfo'):
                 app.process_csv()
 
             show_error.assert_not_called()

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from csv_modifier import CSVModifierApp
+from data_refinery import DataRefineryApp
 
 
 class _Value:
@@ -18,7 +18,7 @@ class _Value:
 
 class TestDelimiterDetection(unittest.TestCase):
     def setUp(self):
-        self.app = CSVModifierApp.__new__(CSVModifierApp)
+        self.app = DataRefineryApp.__new__(DataRefineryApp)
 
     def test_detects_comma_after_garbage_rows_and_quoted_multiline_cell(self):
         content = (

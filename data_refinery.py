@@ -1,15 +1,37 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import csv
-import pandas as pd
+import math
 import os
 import re
+import shutil
 import sys
+import threading
+import webbrowser
 from datetime import datetime
 import decimal
 from collections import Counter
 
-__version__ = "1.5.2"
+from promotion_normalizer import (
+    EXCEL_MAX_DATA_ROWS,
+    export_normalized,
+    load_template,
+    preview_daily_rows,
+)
+from update_checker import check_for_update, load_settings, save_settings
+
+__version__ = "1.6.0"
+
+_PANDAS = None
+
+
+def _get_pandas():
+    """Import pandas only when a selected file actually needs processing."""
+    global _PANDAS
+    if _PANDAS is None:
+        import pandas as pandas_module
+        _PANDAS = pandas_module
+    return _PANDAS
 
 class ParsedNumber:
     __slots__ = ['value', 'orig_decimals', 'orig_text']
@@ -39,7 +61,7 @@ _LANGUAGE_CODES = {
 
 _UI_TEXT = {
     "ko": {
-        "header_subtitle": "열 구분이 불명확하거나 셀 안 줄바꿈이 있는 CSV를 정리합니다.",
+        "header_subtitle": "파일을 복구하고 분석 가능한 구조로 데이터를 정리합니다.",
         "language_label": "언어",
         "section_file": "1. 원본 파일 선택",
         "browse": "파일 찾기...",
@@ -98,7 +120,7 @@ _UI_TEXT = {
         "detect_columns_error": "열 개수를 자동으로 찾지 못했습니다. 구분 기호를 확인하세요.",
     },
     "en": {
-        "header_subtitle": "Fix unclear CSV columns and line breaks inside text cells.",
+        "header_subtitle": "Repair files and prepare structured data for analysis.",
         "language_label": "Language",
         "section_file": "1. Choose the source file",
         "browse": "Browse...",
@@ -157,7 +179,7 @@ _UI_TEXT = {
         "detect_columns_error": "Could not detect the number of columns. Check the separator.",
     },
     "pl": {
-        "header_subtitle": "Porządkuje niejasne kolumny CSV i podziały wierszy w komórkach.",
+        "header_subtitle": "Naprawia pliki i porządkuje dane w strukturę gotową do analizy.",
         "language_label": "Język",
         "section_file": "1. Wybierz plik źródłowy",
         "browse": "Wybierz plik...",
@@ -217,7 +239,120 @@ _UI_TEXT = {
     },
 }
 
-class CSVModifierApp:
+_UI_TEXT["en"].update({
+    "task_label": "Task",
+    "task_options": ("CSV repair", "Promotion template"),
+    "update_enabled": "Check for updates automatically",
+    "check_updates": "Check now",
+    "checking_updates": "Checking GitHub for updates…",
+    "update_current": "You have the latest version.",
+    "update_off": "Automatic update checks are off.",
+    "update_available": "Version {version} is available.",
+    "download_update": "Download update",
+    "promo_file_section": "Promotion template",
+    "promo_file_info": "Use the two-sheet Excel template. Dates must use YYYY-MM-DD.",
+    "promo_download": "Download template…",
+    "promo_browse": "Choose template…",
+    "promo_output_section": "Daily support output",
+    "promo_output_label": "Save daily support as",
+    "promo_output_options": ("CSV daily support (.csv)", "Excel daily support (.xlsx)"),
+    "promo_output_help": "Promotion master and support rules are always saved as separate CSV files.",
+    "promo_process": "Create daily support files",
+    "promo_result_title": "Promotion template result",
+    "promo_initial_result": "Download the template, enter promotion rules, then choose the completed Excel file.",
+    "promo_select_title": "Choose a promotion template",
+    "promo_select_message": "Choose the completed promotion template (.xlsx).",
+    "promo_template_saved": "Template saved: {name}",
+    "promo_invalid": "Template needs attention ({count} issue(s))",
+    "promo_valid": "Template is ready · {rules} support rules create {rows} daily rows.",
+    "promo_preview": "Preview (first {count} daily rows)",
+    "promo_overlap": "Overlapping rule pairs for the same model: {count}. They are kept separately.",
+    "promo_saving": "Creating compact and daily support files…",
+    "promo_done": "Created {rows} daily support rows.",
+    "promo_summary_title": "Files created",
+    "promo_master_file": "• Promotion master: {name}",
+    "promo_rules_file": "• Support rules: {name}",
+    "promo_daily_file": "• Daily support: {name}",
+    "promo_issue_more": "• … and {count} more issue(s).",
+    "promo_excel_limit": "Excel output is limited to {limit:,} data rows. Choose CSV for this template.",
+})
+_UI_TEXT["ko"].update({
+    "task_label": "작업 방식",
+    "task_options": ("CSV 구조 복구", "프로모션 템플릿"),
+    "update_enabled": "새 버전 자동 확인",
+    "check_updates": "지금 확인",
+    "checking_updates": "GitHub에서 새 버전을 확인하는 중…",
+    "update_current": "현재 최신 버전을 사용하고 있습니다.",
+    "update_off": "새 버전 자동 확인이 꺼져 있습니다.",
+    "update_available": "새 버전 {version}을 사용할 수 있습니다.",
+    "download_update": "업데이트 다운로드",
+    "promo_file_section": "프로모션 템플릿",
+    "promo_file_info": "두 시트로 된 Excel 템플릿을 사용합니다. 날짜는 YYYY-MM-DD 형식으로 입력하세요.",
+    "promo_download": "템플릿 받기…",
+    "promo_browse": "작성한 템플릿 선택…",
+    "promo_output_section": "일별 지원금 저장",
+    "promo_output_label": "일별 지원금 파일 형식",
+    "promo_output_options": ("CSV 일별 지원금 (.csv)", "Excel 일별 지원금 (.xlsx)"),
+    "promo_output_help": "프로모션 마스터와 지원 규칙은 별도의 CSV 파일로 항상 함께 저장됩니다.",
+    "promo_process": "일별 지원금 파일 만들기",
+    "promo_result_title": "프로모션 템플릿 결과",
+    "promo_initial_result": "템플릿을 받은 뒤 프로모션 규칙을 입력하고, 작성한 Excel 파일을 선택하세요.",
+    "promo_select_title": "프로모션 템플릿 선택",
+    "promo_select_message": "작성한 프로모션 템플릿(.xlsx)을 선택하세요.",
+    "promo_template_saved": "템플릿 저장 완료: {name}",
+    "promo_invalid": "템플릿에 확인할 내용이 있습니다 ({count}개).",
+    "promo_valid": "템플릿 준비 완료 · 지원 규칙 {rules}개가 일별 행 {rows}개를 만듭니다.",
+    "promo_preview": "미리보기 (일별 결과 처음 {count}개)",
+    "promo_overlap": "같은 모델에서 겹치는 지원 규칙 쌍: {count}개 · 각각 별도로 유지됩니다.",
+    "promo_saving": "기준 파일과 일별 지원금 파일을 만드는 중…",
+    "promo_done": "일별 지원금 행 {rows}개를 만들었습니다.",
+    "promo_summary_title": "생성된 파일",
+    "promo_master_file": "• 프로모션 마스터: {name}",
+    "promo_rules_file": "• 지원 규칙: {name}",
+    "promo_daily_file": "• 일별 지원금: {name}",
+    "promo_issue_more": "• 그 외 {count}개 문제",
+    "promo_excel_limit": "Excel은 데이터 행을 최대 {limit:,}개까지만 저장할 수 있습니다. 이 템플릿은 CSV를 선택하세요.",
+})
+_UI_TEXT["pl"].update({
+    "task_label": "Zadanie",
+    "task_options": ("Naprawa CSV", "Szablon promocji"),
+    "update_enabled": "Sprawdzaj aktualizacje automatycznie",
+    "check_updates": "Sprawdź teraz",
+    "checking_updates": "Sprawdzanie aktualizacji na GitHubie…",
+    "update_current": "Używasz najnowszej wersji.",
+    "update_off": "Automatyczne sprawdzanie aktualizacji jest wyłączone.",
+    "update_available": "Dostępna jest wersja {version}.",
+    "download_update": "Pobierz aktualizację",
+    "promo_file_section": "Szablon promocji",
+    "promo_file_info": "Użyj szablonu Excel z dwoma arkuszami. Daty wpisuj jako YYYY-MM-DD.",
+    "promo_download": "Pobierz szablon…",
+    "promo_browse": "Wybierz szablon…",
+    "promo_output_section": "Dzienna dopłata",
+    "promo_output_label": "Zapisz dzienną dopłatę jako",
+    "promo_output_options": ("Dzienna dopłata CSV (.csv)", "Dzienna dopłata Excel (.xlsx)"),
+    "promo_output_help": "Master promocji i reguły dopłat są zawsze zapisywane jako osobne pliki CSV.",
+    "promo_process": "Utwórz dzienne pliki dopłat",
+    "promo_result_title": "Wynik szablonu promocji",
+    "promo_initial_result": "Pobierz szablon, wpisz reguły promocji, a następnie wybierz gotowy plik Excel.",
+    "promo_select_title": "Wybierz szablon promocji",
+    "promo_select_message": "Wybierz gotowy szablon promocji (.xlsx).",
+    "promo_template_saved": "Zapisano szablon: {name}",
+    "promo_invalid": "Szablon wymaga poprawek ({count}).",
+    "promo_valid": "Szablon jest gotowy · {rules} reguł tworzy {rows} dziennych wierszy.",
+    "promo_preview": "Podgląd (pierwsze {count} dziennych wierszy)",
+    "promo_overlap": "Nakładające się pary reguł dla tego samego modelu: {count}. Są zachowane osobno.",
+    "promo_saving": "Tworzenie plików źródłowych i dziennych dopłat…",
+    "promo_done": "Utworzono {rows} dziennych wierszy dopłat.",
+    "promo_summary_title": "Utworzone pliki",
+    "promo_master_file": "• Master promocji: {name}",
+    "promo_rules_file": "• Reguły dopłat: {name}",
+    "promo_daily_file": "• Dzienna dopłata: {name}",
+    "promo_issue_more": "• … oraz {count} kolejnych problemów.",
+    "promo_excel_limit": "Excel zapisuje najwyżej {limit:,} wierszy danych. Wybierz CSV dla tego szablonu.",
+})
+
+
+class DataRefineryApp:
     @staticmethod
     def _resource_path(filename):
         """Find bundled assets both during development and in PyInstaller builds."""
@@ -228,21 +363,26 @@ class CSVModifierApp:
         self.root = root
         self.language = tk.StringVar(value="English")
         self._last_result = None
-        self.root.title(f"CSV Modifier v{__version__}")
-        self.root.geometry("820x760")
-        self.root.minsize(700, 650)
+        self._promotion_data = None
+        self._update_url = None
+        self._update_state = "idle"
+        self._update_version = None
+        self._update_settings = load_settings()
+        self.update_check_enabled = tk.BooleanVar(
+            value=self._update_settings.get("update_check_enabled", True)
+        )
+        self.root.title(f"Data Refinery v{__version__}")
+        self.root.geometry("880x840")
+        self.root.minsize(720, 700)
 
         try:
             self.root.iconbitmap(self._resource_path("icon.ico"))
         except Exception:
             pass
 
-        self._app_icon_image = None
         self._header_icon_image = None
         try:
-            self._app_icon_image = tk.PhotoImage(file=self._resource_path("icon.png"))
-            self._header_icon_image = self._app_icon_image.subsample(20, 20)
-            self.root.iconphoto(True, self._app_icon_image)
+            self._header_icon_image = tk.PhotoImage(file=self._resource_path("header_icon.png"))
         except tk.TclError:
             pass
 
@@ -272,6 +412,8 @@ class CSVModifierApp:
         style.configure("Header.Icon.TLabel", background=navy)
         style.configure("Header.Title.TLabel", background=navy, foreground="#FFFFFF", font=("Segoe UI Semibold", 20))
         style.configure("Header.Subtitle.TLabel", background=navy, foreground="#C9D6E2", font=("Segoe UI", 10))
+        style.configure("Header.TCheckbutton", background=navy, foreground="#C9D6E2", font=("Segoe UI", 8))
+        style.map("Header.TCheckbutton", background=[("active", navy)], foreground=[("active", "#FFFFFF")])
         style.configure("Card.TLabelframe", background=surface, bordercolor=border, relief="solid", borderwidth=1)
         style.configure("Card.TLabelframe.Label", background=surface, foreground=navy, font=("Segoe UI Semibold", 10))
         style.configure("TLabel", background=surface, foreground=text)
@@ -287,6 +429,13 @@ class CSVModifierApp:
         style.map("Primary.TButton", background=[("active", accent_active), ("pressed", accent_active), ("disabled", "#9FB3C8")], foreground=[("disabled", "#F0F4F8")])
         style.configure("Secondary.TButton", background="#E8F1F5", foreground=accent, font=("Segoe UI Semibold", 9), padding=(12, 8), borderwidth=0)
         style.map("Secondary.TButton", background=[("active", "#D4E8EE"), ("pressed", "#C4DDE5")])
+        style.configure("App.TNotebook", background=page_bg, borderwidth=0)
+        style.configure("App.TNotebook.Tab", background="#D9E2EC", foreground=text, padding=(18, 9), font=("Segoe UI Semibold", 10))
+        style.map(
+            "App.TNotebook.Tab",
+            background=[("selected", surface), ("active", "#E8F1F5")],
+            foreground=[("selected", navy)],
+        )
         style.configure("Status.TFrame", background=navy)
         style.configure("Status.TLabel", background=navy, foreground="#D9E2EC", font=("Segoe UI", 9))
         style.configure("App.Horizontal.TProgressbar", troughcolor=border, background=accent, bordercolor=border, lightcolor=accent, darkcolor=accent)
@@ -294,7 +443,7 @@ class CSVModifierApp:
         main = ttk.Frame(root, style="App.TFrame", padding=(24, 20, 24, 18))
         main.grid(row=0, column=0, sticky="nsew")
         main.columnconfigure(0, weight=1)
-        main.rowconfigure(5, weight=1)
+        main.rowconfigure(3, weight=1)
 
         header = ttk.Frame(main, style="Header.TFrame", padding=(22, 18))
         header.grid(row=0, column=0, sticky="ew")
@@ -302,10 +451,10 @@ class CSVModifierApp:
         title_column = 0
         if self._header_icon_image is not None:
             ttk.Label(header, image=self._header_icon_image, style="Header.Icon.TLabel").grid(
-                row=0, column=0, rowspan=2, sticky="w", padx=(0, 14)
+                row=0, column=0, rowspan=3, sticky="w", padx=(0, 14)
             )
             title_column = 1
-        self.header_title = ttk.Label(header, text="CSV Modifier", style="Header.Title.TLabel")
+        self.header_title = ttk.Label(header, text="Data Refinery", style="Header.Title.TLabel")
         self.header_title.grid(row=0, column=title_column, sticky="w")
         self.header_subtitle = ttk.Label(
             header,
@@ -324,8 +473,45 @@ class CSVModifierApp:
         self.language_combo.grid(row=0, column=3, rowspan=2, sticky="e")
         self.language_combo.bind("<<ComboboxSelected>>", self._apply_language)
 
-        self.file_section = ttk.LabelFrame(main, style="Card.TLabelframe", padding=(18, 14))
-        self.file_section.grid(row=1, column=0, sticky="ew", pady=(16, 12))
+        self.update_frame = ttk.Frame(header, style="Header.TFrame")
+        self.update_frame.grid(row=2, column=title_column, columnspan=3, sticky="ew", pady=(10, 0))
+        self.update_frame.columnconfigure(0, weight=1)
+        self.update_status = tk.StringVar()
+        ttk.Label(self.update_frame, textvariable=self.update_status, style="Header.Subtitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.update_check_button = ttk.Button(
+            self.update_frame,
+            command=lambda: self._start_update_check(force=True),
+            style="Secondary.TButton",
+        )
+        self.update_check_button.grid(row=0, column=1, padx=(8, 0))
+        self.download_update_button = ttk.Button(
+            self.update_frame,
+            command=self._open_update_page,
+            style="Secondary.TButton",
+            state="disabled",
+        )
+        self.download_update_button.grid(row=0, column=2, padx=(8, 0))
+        self.update_enabled_check = ttk.Checkbutton(
+            self.update_frame,
+            variable=self.update_check_enabled,
+            command=self._save_update_preference,
+            style="Header.TCheckbutton",
+        )
+        self.update_enabled_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        self.notebook = ttk.Notebook(main, style="App.TNotebook")
+        self.notebook.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
+        self.csv_tab = ttk.Frame(self.notebook, style="App.TFrame", padding=(0, 12, 0, 0))
+        self.promotion_tab = ttk.Frame(self.notebook, style="App.TFrame", padding=(0, 12, 0, 0))
+        self.notebook.add(self.csv_tab)
+        self.notebook.add(self.promotion_tab)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_task_tab_change)
+
+        self.file_section = ttk.LabelFrame(self.csv_tab, style="Card.TLabelframe", padding=(18, 14))
+        self.file_section.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        self.csv_tab.columnconfigure(0, weight=1)
         self.file_section.columnconfigure(0, weight=1)
 
         # File Path
@@ -340,16 +526,16 @@ class CSVModifierApp:
         )
         self.file_info_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
-        settings = ttk.Frame(main, style="App.TFrame")
-        settings.grid(row=2, column=0, sticky="nsew")
-        settings.columnconfigure(0, weight=1)
-        settings.columnconfigure(1, weight=1)
+        self.settings = ttk.Frame(self.csv_tab, style="App.TFrame")
+        self.settings.grid(row=1, column=0, sticky="nsew")
+        self.settings.columnconfigure(0, weight=1)
+        self.settings.columnconfigure(1, weight=1)
 
-        self.import_section = ttk.LabelFrame(settings, style="Card.TLabelframe", padding=(18, 14))
+        self.import_section = ttk.LabelFrame(self.settings, style="Card.TLabelframe", padding=(18, 14))
         self.import_section.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         self.import_section.columnconfigure(1, weight=1)
 
-        self.output_section = ttk.LabelFrame(settings, style="Card.TLabelframe", padding=(18, 14))
+        self.output_section = ttk.LabelFrame(self.settings, style="Card.TLabelframe", padding=(18, 14))
         self.output_section.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self.output_section.columnconfigure(1, weight=1)
 
@@ -419,26 +605,84 @@ class CSVModifierApp:
         )
         self.combo_out_format.bind("<<ComboboxSelected>>", self._update_output_hint)
 
-        action_area = ttk.Frame(main, style="App.TFrame")
-        action_area.grid(row=3, column=0, sticky="ew", pady=(16, 0))
-        action_area.columnconfigure(0, weight=1)
+        self.action_area = ttk.Frame(self.csv_tab, style="App.TFrame")
+        self.action_area.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+        self.action_area.columnconfigure(0, weight=1)
         self.output_hint = tk.StringVar()
-        ttk.Label(action_area, textvariable=self.output_hint, style="Footer.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.action_area, textvariable=self.output_hint, style="Footer.TLabel").grid(row=0, column=0, sticky="w")
 
         # Process Button
-        self.btn_process = ttk.Button(action_area, command=self.process_csv, style="Primary.TButton")
+        self.btn_process = ttk.Button(self.action_area, command=self.process_csv, style="Primary.TButton")
         self.btn_process.grid(row=0, column=1, sticky="e")
+
+        # Promotion keeps its own tab while sharing the explanatory result panel below.
+        self.promotion_tab.columnconfigure(0, weight=1)
+        self.promotion_file_section = ttk.LabelFrame(self.promotion_tab, style="Card.TLabelframe", padding=(18, 14))
+        self.promotion_file_section.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        self.promotion_file_section.columnconfigure(0, weight=1)
+        self.promotion_filepath = tk.StringVar()
+        self.promotion_path_entry = ttk.Entry(
+            self.promotion_file_section,
+            textvariable=self.promotion_filepath,
+            state="readonly",
+        )
+        self.promotion_path_entry.grid(row=0, column=0, sticky="ew")
+        self.promotion_browse_button = ttk.Button(
+            self.promotion_file_section,
+            command=self.browse_promotion_template,
+            style="Secondary.TButton",
+        )
+        self.promotion_browse_button.grid(row=0, column=1, padx=(10, 0))
+        self.promotion_download_button = ttk.Button(
+            self.promotion_file_section,
+            command=self.download_promotion_template,
+            style="Secondary.TButton",
+        )
+        self.promotion_download_button.grid(row=0, column=2, padx=(10, 0))
+        self.promotion_info_label = ttk.Label(self.promotion_file_section, style="Muted.TLabel", wraplength=720)
+        self.promotion_info_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        self.promotion_output_section = ttk.LabelFrame(self.promotion_tab, style="Card.TLabelframe", padding=(18, 14))
+        self.promotion_output_section.grid(row=1, column=0, sticky="ew")
+        self.promotion_output_section.columnconfigure(1, weight=1)
+        self.promotion_output_format = tk.StringVar(value="CSV")
+        self.promotion_output_label = ttk.Label(self.promotion_output_section, style="Field.TLabel")
+        self.promotion_output_label.grid(row=0, column=0, sticky="w")
+        self.promotion_output_combo = ttk.Combobox(
+            self.promotion_output_section,
+            textvariable=self.promotion_output_format,
+            state="readonly",
+            width=30,
+        )
+        self.promotion_output_combo.grid(row=0, column=1, sticky="w", padx=(14, 0))
+        self.promotion_output_combo.bind("<<ComboboxSelected>>", self._update_promotion_output_hint)
+        self.promotion_output_help = ttk.Label(self.promotion_output_section, style="Help.TLabel", wraplength=600)
+        self.promotion_output_help.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        self.promotion_action_area = ttk.Frame(self.promotion_tab, style="App.TFrame")
+        self.promotion_action_area.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+        self.promotion_action_area.columnconfigure(0, weight=1)
+        self.promotion_output_hint = tk.StringVar()
+        ttk.Label(self.promotion_action_area, textvariable=self.promotion_output_hint, style="Footer.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.promotion_process_button = ttk.Button(
+            self.promotion_action_area,
+            command=self.process_promotion_template,
+            style="Primary.TButton",
+        )
+        self.promotion_process_button.grid(row=0, column=1, sticky="e")
 
         # Progress bar (advances during processing)
         self.progress = ttk.Progressbar(main, mode="determinate", maximum=100, style="App.Horizontal.TProgressbar")
-        self.progress.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        self.progress.grid(row=2, column=0, sticky="ew", pady=(14, 0))
 
         self.result_section = ttk.LabelFrame(
             main,
             style="Card.TLabelframe",
             padding=(12, 10),
         )
-        self.result_section.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
+        self.result_section.grid(row=3, column=0, sticky="nsew", pady=(14, 0))
         self.result_section.columnconfigure(0, weight=1)
         self.result_section.rowconfigure(0, weight=1)
         self.result_text = tk.Text(
@@ -463,6 +707,8 @@ class CSVModifierApp:
         ttk.Label(status_bar, textvariable=self.log_text, style="Status.TLabel").grid(row=0, column=0, sticky="w")
 
         self._apply_language()
+        self._on_task_tab_change()
+        self.root.after(350, self._start_update_check)
 
     def browse_file(self):
         filename = filedialog.askopenfilename(
@@ -479,10 +725,202 @@ class CSVModifierApp:
             self.update_max_columns()
             self._update_output_hint()
 
+    def download_promotion_template(self):
+        destination = filedialog.asksaveasfilename(
+            title=self._ui("promo_download"),
+            defaultextension=".xlsx",
+            initialfile="promotion_template.xlsx",
+            filetypes=(("Excel workbook", "*.xlsx"),),
+        )
+        if not destination:
+            return
+        try:
+            shutil.copyfile(self._resource_path("promotion_template.xlsx"), destination)
+            self.log_text.set(self._ui("promo_template_saved").format(name=os.path.basename(destination)))
+            self._set_result_text(self._ui("promo_template_saved").format(name=destination))
+        except OSError as error:
+            messagebox.showerror(self._ui("promo_file_section"), str(error))
+
+    def browse_promotion_template(self):
+        filename = filedialog.askopenfilename(
+            title=self._ui("promo_select_title"),
+            filetypes=(("Excel template", "*.xlsx"),),
+        )
+        if filename:
+            self.promotion_filepath.set(filename)
+            self._load_promotion_template()
+
+    def _load_promotion_template(self):
+        path = self.promotion_filepath.get()
+        if not path or not os.path.exists(path):
+            self._promotion_data = None
+            return None
+        try:
+            data, issues = load_template(path)
+        except Exception as error:
+            self._promotion_data = None
+            self._set_result_text(str(error))
+            return None
+        if issues:
+            self._promotion_data = None
+            shown = [f"• {issue.display()}" for issue in issues[:6]]
+            if len(issues) > len(shown):
+                shown.append(self._ui("promo_issue_more").format(count=len(issues) - len(shown)))
+            self.log_text.set(self._ui("promo_invalid").format(count=len(issues)))
+            self._set_result_text("\n".join((
+                self._ui("promo_invalid").format(count=len(issues)),
+                "",
+                *shown,
+            )))
+            return None
+        self._promotion_data = data
+        self._show_promotion_preview(data)
+        return data
+
+    def _show_promotion_preview(self, data):
+        preview = preview_daily_rows(data, limit=20)
+        lines = [
+            self._ui("promo_valid").format(rules=len(data.support_rules), rows=f"{data.estimated_daily_rows:,}"),
+            self._ui("promo_overlap").format(count=data.overlapping_rule_pairs),
+            "",
+            self._ui("promo_preview").format(count=len(preview)),
+        ]
+        lines.extend(
+            "{applied_date} | {model_code} | {promotion_id} | {support_per_unit} {currency}".format(**row)
+            for row in preview
+        )
+        self.log_text.set(self._ui("promo_valid").format(rules=len(data.support_rules), rows=f"{data.estimated_daily_rows:,}"))
+        self._set_result_text("\n".join(lines))
+
+    def _update_promotion_output_hint(self):
+        extension = ".xlsx" if self._promotion_output_id(self.promotion_output_format.get()) == "Excel (.xlsx)" else ".csv"
+        self.promotion_output_hint.set(f"promotion_daily_support_YYYYMMDD_HHMM{extension}")
+
+    def process_promotion_template(self):
+        if not self.promotion_filepath.get():
+            messagebox.showerror(self._ui("promo_select_title"), self._ui("promo_select_message"))
+            return
+        data = self._load_promotion_template()
+        if data is None:
+            return
+        daily_format = self._promotion_output_id(self.promotion_output_format.get())
+        if daily_format == "Excel (.xlsx)" and data.estimated_daily_rows > EXCEL_MAX_DATA_ROWS:
+            self._set_result_text(self._ui("promo_excel_limit").format(limit=EXCEL_MAX_DATA_ROWS))
+            return
+        try:
+            self._set_progress(15, self._ui("promo_saving"))
+            result = export_normalized(data, self.promotion_filepath.get(), daily_format=daily_format)
+            self._set_progress(100, self._ui("promo_done").format(rows=f"{result.daily_rows:,}"))
+            self._set_result_text("\n".join((
+                self._ui("promo_done").format(rows=f"{result.daily_rows:,}"),
+                "",
+                self._ui("promo_summary_title"),
+                self._ui("promo_master_file").format(name=result.master_path.name),
+                self._ui("promo_rules_file").format(name=result.rules_path.name),
+                self._ui("promo_daily_file").format(name=result.daily_path.name),
+                self._ui("promo_overlap").format(count=result.overlapping_rule_pairs),
+            )))
+            self.log_text.set(self._ui("promo_done").format(rows=f"{result.daily_rows:,}"))
+        except Exception as error:
+            messagebox.showerror(self._ui("promo_result_title"), str(error))
+        finally:
+            self._set_progress(0)
+
     def _language_code(self):
         language = getattr(self, 'language', None)
         selection = language.get() if language is not None else "한국어"
         return _LANGUAGE_CODES.get(selection, "ko")
+
+    def _selected_task_id(self):
+        """Return a stable feature id for the notebook's selected tab."""
+        return "promotion" if self.notebook.select() == str(self.promotion_tab) else "csv"
+
+    @staticmethod
+    def _promotion_output_id(selection):
+        return "Excel (.xlsx)" if "excel" in str(selection).casefold() else "CSV"
+
+    def _on_task_tab_change(self, event=None):
+        """Refresh the shared explanation panel for the selected feature tab."""
+        if self._selected_task_id() == "promotion":
+            self.result_section.configure(text=self._ui("promo_result_title"))
+            self._update_promotion_output_hint()
+            if self._promotion_data is None:
+                self._set_result_text(self._ui("promo_initial_result"))
+                self.log_text.set(self._ui("promo_initial_result"))
+            else:
+                self._show_promotion_preview(self._promotion_data)
+        else:
+            self.result_section.configure(text=self._ui("result_title"))
+            if self._last_result is None:
+                self._set_result_text(self._ui("initial_result"))
+                self.log_text.set(self._ui("ready"))
+            else:
+                self._set_result_text(self._format_result_summary(self._last_result))
+
+    def _save_update_preference(self):
+        self._update_settings["update_check_enabled"] = bool(self.update_check_enabled.get())
+        save_settings(self._update_settings)
+        if not self.update_check_enabled.get():
+            self._update_state = "off"
+            self._refresh_update_status()
+        else:
+            # Re-enable the normal background check so the visible status is
+            # never left saying that checks are disabled.
+            self._start_update_check()
+
+    def _start_update_check(self, force=False):
+        if not self.update_check_enabled.get() and not force:
+            self._update_state = "off"
+            self._refresh_update_status()
+            return
+        self._update_state = "checking"
+        self._update_version = None
+        self._refresh_update_status()
+        self.download_update_button.configure(state="disabled")
+        self._update_url = None
+        if force:
+            self._update_settings["last_update_check"] = ""
+
+        def worker():
+            release = check_for_update(__version__, self._update_settings)
+            save_settings(self._update_settings)
+            try:
+                self.root.after(0, lambda: self._finish_update_check(release))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="update-check", daemon=True).start()
+
+    def _finish_update_check(self, release):
+        if release is None:
+            self._update_state = "current"
+            self._update_version = None
+            self._refresh_update_status()
+            return
+        self._update_url = release.url
+        self._update_state = "available"
+        self._update_version = release.version
+        self._refresh_update_status()
+        self.download_update_button.configure(state="normal")
+
+    def _refresh_update_status(self):
+        """Render the stored update state in the currently selected language."""
+        key = {
+            "checking": "checking_updates",
+            "current": "update_current",
+            "off": "update_off",
+            "available": "update_available",
+        }.get(self._update_state)
+        if not key:
+            return
+        message = self._ui(key)
+        if self._update_state == "available":
+            message = message.format(version=self._update_version)
+        self.update_status.set(message)
+
+    def _open_update_page(self):
+        if self._update_url:
+            webbrowser.open(self._update_url)
 
     def _ui(self, key):
         return _UI_TEXT[self._language_code()][key]
@@ -491,6 +929,7 @@ class CSVModifierApp:
         """Refresh all user-facing labels while keeping the chosen data settings."""
         number_mode = self._number_mode(self.num_format.get())
         output_fmt = self._output_format(self.out_format.get())
+        promotion_output_id = self._promotion_output_id(self.promotion_output_format.get())
         text = _UI_TEXT[self._language_code()]
 
         self.header_subtitle.configure(text=text['header_subtitle'])
@@ -507,7 +946,22 @@ class CSVModifierApp:
         self.columns_help_label.configure(text=text['columns_help'])
         self.output_format_label.configure(text=text['output_label'])
         self.btn_process.configure(text=text['process'])
-        self.result_section.configure(text=text['result_title'])
+        self.notebook.tab(self.csv_tab, text=text['task_options'][0])
+        self.notebook.tab(self.promotion_tab, text=text['task_options'][1])
+        self.update_check_button.configure(text=text['check_updates'])
+        self.download_update_button.configure(text=text['download_update'])
+        self.update_enabled_check.configure(text=text['update_enabled'])
+
+        self.promotion_file_section.configure(text=text['promo_file_section'])
+        self.promotion_info_label.configure(text=text['promo_file_info'])
+        self.promotion_download_button.configure(text=text['promo_download'])
+        self.promotion_browse_button.configure(text=text['promo_browse'])
+        self.promotion_output_section.configure(text=text['promo_output_section'])
+        self.promotion_output_label.configure(text=text['promo_output_label'])
+        self.promotion_output_combo.configure(values=text['promo_output_options'])
+        self.promotion_output_format.set(text['promo_output_options'][1 if promotion_output_id == 'Excel (.xlsx)' else 0])
+        self.promotion_output_help.configure(text=text['promo_output_help'])
+        self.promotion_process_button.configure(text=text['promo_process'])
 
         self.combo_format.configure(values=text['number_options'])
         self.num_format.set(text['number_options'][1 if number_mode == 'Polish' else 0])
@@ -516,11 +970,8 @@ class CSVModifierApp:
 
         self._update_number_format_help()
         self._update_output_hint()
-        self.log_text.set(text['ready'])
-        if self._last_result is None:
-            self._set_result_text(text['initial_result'])
-        else:
-            self._set_result_text(self._format_result_summary(self._last_result))
+        self._refresh_update_status()
+        self._on_task_tab_change()
 
     @staticmethod
     def _number_mode(selection):
@@ -723,6 +1174,7 @@ class CSVModifierApp:
         """Read an Excel sheet into rows of native values (no CSV round-trip,
         so quoting/encoding problems cannot occur). Trailing empty cells are
         trimmed per row so garbage/header detection works the same as for CSV."""
+        pd = _get_pandas()
         df = pd.read_excel(file_path, header=None, dtype=object, nrows=max_lines)
         rows = []
         for rec in df.itertuples(index=False, name=None):
@@ -940,7 +1392,7 @@ class CSVModifierApp:
             text = f"{value.value:.{value.orig_decimals}f}"
             return text.replace('.', decimal_separator) if decimal_separator != '.' else text
         if isinstance(value, float):
-            if pd.isna(value):
+            if math.isnan(value):
                 return ''
             text = repr(value)
             return text.replace('.', decimal_separator) if decimal_separator != '.' else text
@@ -1103,6 +1555,7 @@ class CSVModifierApp:
                 col_names.append(name)
 
             # Create DataFrame from the data rows (header excluded)
+            pd = _get_pandas()
             df = pd.DataFrame(body_rows, columns=col_names)
 
             # Type coercion (date -> number -> text) in a single pass per column
@@ -1180,5 +1633,5 @@ class CSVModifierApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = CSVModifierApp(root)
+    app = DataRefineryApp(root)
     root.mainloop()

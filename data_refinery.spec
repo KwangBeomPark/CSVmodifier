@@ -4,19 +4,20 @@ import re
 
 
 project_root = Path(SPECPATH)
-source = (project_root / 'csv_modifier.py').read_text(encoding='utf-8')
+source = (project_root / 'data_refinery.py').read_text(encoding='utf-8')
 match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', source, re.MULTILINE)
 if match is None:
-    raise RuntimeError('Could not find __version__ in csv_modifier.py')
-release_executable_name = f"App04_csv_modifier_v{match.group(1)}"
+    raise RuntimeError('Could not find __version__ in data_refinery.py')
+release_executable_name = f"App04_DataRefinery_v{match.group(1)}"
 
 a = Analysis(
-    ['csv_modifier.py'],
+    ['data_refinery.py'],
     pathex=[str(project_root)],
     binaries=[],
     datas=[
         (str(project_root / 'icon.ico'), '.'),
-        (str(project_root / 'icon.png'), '.'),
+        (str(project_root / 'header_icon.png'), '.'),
+        (str(project_root / 'promotion_template.xlsx'), '.'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -30,9 +31,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
     name=release_executable_name,
     debug=False,
@@ -48,4 +46,19 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(project_root / 'icon.ico'),
+    exclude_binaries=True,
+)
+
+# Install all dependencies beside the launcher.  The installed application then
+# starts directly from Local AppData instead of extracting a one-file bundle on
+# every launch.
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name=release_executable_name,
 )
